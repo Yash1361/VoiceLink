@@ -12,6 +12,8 @@ export default function FaceLandmarkerApp() {
   const faceLandmarkerRef = useRef<any>(null);
   const faceLandmarkerConstantsRef = useRef<any>(null);
   const drawingUtilsRef = useRef<any>(null);
+  const recognitionRef = useRef<any>(null);
+  const shouldTranscribeRef = useRef(false);
 
   const [isReady, setIsReady] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -23,12 +25,17 @@ export default function FaceLandmarkerApp() {
   const [drawMesh, setDrawMesh] = useState(true);
   const [drawIris, setDrawIris] = useState(true);
   const [drawContours, setDrawContours] = useState(true);
+  const [isSpeechSupported, setIsSpeechSupported] = useState(true);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   const videoWidth = 720; // Display width; canvas will scale to the stream size
 
   const startCamera = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
       if (!videoRef.current) return;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
@@ -45,6 +52,98 @@ export default function FaceLandmarkerApp() {
       stream.getTracks().forEach((t) => t.stop());
       v.srcObject = null;
     }
+  }, []);
+
+  const ensureSpeechRecognition = useCallback(() => {
+    if (recognitionRef.current) return recognitionRef.current;
+
+    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionClass) {
+      setIsSpeechSupported(false);
+      return null;
+    }
+
+    setIsSpeechSupported(true);
+    const recognition = new SpeechRecognitionClass();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || "en-US";
+
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      const finals: string[] = [];
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        const text = result[0]?.transcript?.trim?.() ?? "";
+        if (!text) continue;
+        if (result.isFinal) {
+          finals.push(text);
+        } else {
+          interim += `${text} `;
+        }
+      }
+      setTranscript(finals.join("\n").trim());
+      setInterimTranscript(interim.trim());
+    };
+
+    recognition.onerror = (event: any) => {
+      console.warn("Speech recognition error", event);
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        setSpeechError("Microphone access was blocked. Allow it in Safari settings and try again.");
+        shouldTranscribeRef.current = false;
+        recognition.stop();
+        setIsTranscribing(false);
+      } else {
+        setSpeechError(event.error ?? "Speech recognition error");
+      }
+    };
+
+    recognition.onend = () => {
+      if (shouldTranscribeRef.current) {
+        try {
+          recognition.start();
+        } catch (err) {
+          console.warn("Speech recognition restart failed", err);
+        }
+      }
+    };
+
+    recognitionRef.current = recognition;
+    return recognition;
+  }, []);
+
+  const startTranscription = useCallback(() => {
+    const recognition = ensureSpeechRecognition();
+    if (!recognition) return;
+
+    setSpeechError(null);
+    setTranscript("");
+    setInterimTranscript("");
+    shouldTranscribeRef.current = true;
+    if (isTranscribing) return;
+
+    try {
+      recognition.start();
+      setIsTranscribing(true);
+    } catch (err: any) {
+      if (err?.name !== "InvalidStateError") {
+        console.warn("Speech recognition start failed", err);
+        setSpeechError("Could not start transcription. Try again.");
+      }
+    }
+  }, [ensureSpeechRecognition, isTranscribing]);
+
+  const stopTranscription = useCallback(() => {
+    shouldTranscribeRef.current = false;
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    try {
+      recognition.stop();
+    } catch (err) {
+      console.warn("Speech recognition stop failed", err);
+    }
+    setIsTranscribing(false);
+    setInterimTranscript("");
   }, []);
 
   const loadModel = useCallback(async () => {
@@ -154,23 +253,26 @@ export default function FaceLandmarkerApp() {
     }
     await startCamera();
     setIsRunning(true);
+    startTranscription();
     rafRef.current = requestAnimationFrame(loop);
-  }, [isReady, loadModel, loop, startCamera]);
+  }, [isReady, loadModel, loop, startCamera, startTranscription]);
 
   const stop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
     stopCamera();
+    stopTranscription();
     setIsRunning(false);
-  }, [stopCamera]);
+  }, [stopCamera, stopTranscription]);
 
   useEffect(() => {
     // Cleanup on unmount
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       stopCamera();
+      stopTranscription();
     };
-  }, [stopCamera]);
+  }, [stopCamera, stopTranscription]);
 
   // When GPU toggle changes, reload the model with new delegate
   useEffect(() => {
@@ -325,6 +427,39 @@ export default function FaceLandmarkerApp() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Transcription */}
+        <div className="mt-8">
+          <h2 className="text-lg font-semibold mb-3">Live Transcription</h2>
+          {isSpeechSupported ? (
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-3 min-h-[160px]">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                    isTranscribing && isRunning ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  {isTranscribing && isRunning ? "Listening" : "Idle"}
+                </span>
+                {speechError ? <span className="text-rose-600">{speechError}</span> : null}
+              </div>
+              <div className="w-full min-h-[100px] rounded-xl bg-slate-50 p-3 border border-slate-100 text-sm text-slate-700 whitespace-pre-wrap">
+                {transcript ? (
+                  <span>{transcript}</span>
+                ) : (
+                  <span className="text-slate-400">Speak to see the transcript in real time.</span>
+                )}
+                {interimTranscript && (
+                  <span className="text-slate-400 block mt-2 italic">{interimTranscript}</span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 p-4 text-sm">
+              Live transcription is not supported in this browser. Safari 16+ on macOS/iOS should support it when microphone access is allowed.
+            </div>
+          )}
         </div>
 
         {/* Footer */}
