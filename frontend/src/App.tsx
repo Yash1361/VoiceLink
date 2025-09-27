@@ -10,6 +10,7 @@ export default function FaceLandmarkerApp() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const faceLandmarkerRef = useRef<any>(null);
+  const faceLandmarkerConstantsRef = useRef<any>(null);
   const drawingUtilsRef = useRef<any>(null);
 
   const [isReady, setIsReady] = useState(false);
@@ -53,6 +54,7 @@ export default function FaceLandmarkerApp() {
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3"
     );
     const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
+    faceLandmarkerConstantsRef.current = FaceLandmarker;
 
     setLoadingMsg("Loading WASM files…");
     const filesetResolver = await FilesetResolver.forVisionTasks(
@@ -86,24 +88,27 @@ export default function FaceLandmarkerApp() {
     const DrawingUtils = drawingUtilsRef.current;
     const du = new DrawingUtils(ctx);
 
+    const FaceLandmarkerConstants = faceLandmarkerConstantsRef.current;
+    if (!FaceLandmarkerConstants) return;
+
     for (const landmarks of results.faceLandmarks) {
       if (drawMesh) {
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_TESSELATION, {
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_TESSELATION, {
           color: "#C0C0C070",
           lineWidth,
         });
       }
       if (drawContours) {
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_RIGHT_EYE, { color: "#FF3030", lineWidth });
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_RIGHT_EYEBROW, { color: "#FF3030", lineWidth });
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_LEFT_EYE, { color: "#30FF30", lineWidth });
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_LEFT_EYEBROW, { color: "#30FF30", lineWidth });
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_FACE_OVAL, { color: "#E0E0E0", lineWidth });
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_LIPS, { color: "#E0E0E0", lineWidth });
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_RIGHT_EYE, { color: "#FF3030", lineWidth });
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_RIGHT_EYEBROW, { color: "#FF3030", lineWidth });
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_LEFT_EYE, { color: "#30FF30", lineWidth });
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_LEFT_EYEBROW, { color: "#30FF30", lineWidth });
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_FACE_OVAL, { color: "#E0E0E0", lineWidth });
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_LIPS, { color: "#E0E0E0", lineWidth });
       }
       if (drawIris) {
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_RIGHT_IRIS, { color: "#FF3030", lineWidth });
-        du.drawConnectors(landmarks, faceLandmarkerRef.current.FACE_LANDMARKS_LEFT_IRIS, { color: "#30FF30", lineWidth });
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_RIGHT_IRIS, { color: "#FF3030", lineWidth });
+        du.drawConnectors(landmarks, FaceLandmarkerConstants.FACE_LANDMARKS_LEFT_IRIS, { color: "#30FF30", lineWidth });
       }
     }
   }, [drawContours, drawIris, drawMesh, lineWidth]);
@@ -333,4 +338,3 @@ export default function FaceLandmarkerApp() {
     </div>
   );
 }
-
