@@ -40,9 +40,9 @@ export default function FaceLandmarkerApp() {
     {
       name: "Select",
       metric: "jawOpen",
-      threshold: 0.30,
+      threshold: 0.40,
       framesRequired: 3,
-      onActivate: () => console.log("Jaw open triggered!")
+      onActivate: () => console.log("Select triggered!")
     },
     {
       name: "Left",
@@ -61,7 +61,7 @@ export default function FaceLandmarkerApp() {
     {
       name: "Up",
       metric: "browOuterUpLeft",
-      threshold: 0.65,
+      threshold: 0.7,
       framesRequired: 1,
       onActivate: () => console.log("Up triggered!")
     },
@@ -71,6 +71,13 @@ export default function FaceLandmarkerApp() {
       threshold: 0.35,
       framesRequired: 1,
       onActivate: () => console.log("Down triggered!")
+    },
+    {
+      name: "Open keyboard",
+      metric: "mouthFunnel",
+      threshold: 0.125,
+      framesRequired: 1,
+      onActivate: () => console.log("Open keyboard triggered!")
     }
   ];
 
