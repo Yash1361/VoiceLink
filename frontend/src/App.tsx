@@ -78,7 +78,8 @@ export default function FaceLandmarkerApp() {
   {
     name: "Down",
     metrics: [
-      { name: "mouthShrugLower", threshold: 0.35, comparison: ">" }
+      { name: "browDownLeft", threshold: 0.025, comparison: ">" },
+      { name: "browDownRight", threshold: 0.025, comparison: ">" }
     ],
     framesRequired: 1,
     onActivate: () => console.log("Down triggered!")
@@ -86,7 +87,8 @@ export default function FaceLandmarkerApp() {
   {
     name: "Open keyboard",
     metrics: [
-      { name: "mouthSmileLeft", threshold: 0.5, comparison: ">" }
+      { name: "mouthSmileLeft", threshold: 0.5, comparison: ">" },
+      { name: "jawOpen", threshold: 0.15, comparison: "<"},
     ],
     framesRequired: 1,
     onActivate: () => console.log("Open keyboard triggered!")
