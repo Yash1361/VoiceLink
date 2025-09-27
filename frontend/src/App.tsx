@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { Camera, CameraOff, Sparkles, Cpu, Activity, Play, Pause } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Camera, CameraOff, Sparkles, Cpu, Activity, Play, Pause, X } from "lucide-react";
 import { useBlendshapeGestures } from "./hooks/useGesture";
 
 
@@ -32,6 +32,12 @@ export default function FaceLandmarkerApp() {
   const [transcript, setTranscript] = useState("");
   const [interimTranscript, setInterimTranscript] = useState("");
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const [currentWordIndex, setCurrentWordIndex] = useState(0);
+
+  const words = useMemo(() => ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"], []);
+  const columns = 3;
+  const prevActiveGesturesRef = useRef<string[]>([]);
 
 
   const videoWidth = 720; // Display width; canvas will scale to the stream size
@@ -75,9 +81,43 @@ export default function FaceLandmarkerApp() {
   ];
 
   const activeGestures = useBlendshapeGestures(blendShapes, gestures);
+  const totalWords = words.length;
 
+  useEffect(() => {
+    const prev = prevActiveGesturesRef.current;
+    const newlyActivated = activeGestures.filter((gesture) => !prev.includes(gesture));
 
-  useBlendshapeGestures(blendShapes, gestures);
+    if (newlyActivated.length > 0) {
+      newlyActivated.forEach((gesture) => {
+        setCurrentWordIndex((current) => {
+          switch (gesture) {
+            case "Right": {
+              const isEndOfRow = current % columns === columns - 1 || current + 1 >= totalWords;
+              return isEndOfRow ? current : current + 1;
+            }
+            case "Left": {
+              const isStartOfRow = current % columns === 0;
+              return isStartOfRow ? current : current - 1;
+            }
+            case "Down": {
+              const next = current + columns;
+              return next < totalWords ? next : current;
+            }
+            case "Up": {
+              const next = current - columns;
+              return next >= 0 ? next : current;
+            }
+            default:
+              return current;
+          }
+        });
+      });
+    }
+
+    prevActiveGesturesRef.current = activeGestures;
+  }, [activeGestures, columns, totalWords]);
+
+  const isSelectActive = activeGestures.includes("Select");
 
 
 
@@ -341,13 +381,21 @@ export default function FaceLandmarkerApp() {
   }, [useGPU]);
 
   const header = (
-    <div className="w-full max-w-6xl mx-auto py-8">
-      <div className="flex items-center justify-between">
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Sparkles className="w-8 h-8" />
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Face Landmarks — Webcam</h1>
         </div>
-        <div className="text-sm opacity-70">Powered by MediaPipe Tasks Vision</div>
+        <div className="flex items-center gap-3 ml-auto">
+          <span className="text-sm opacity-70 hidden sm:inline">Powered by MediaPipe Tasks Vision</span>
+          <button
+            onClick={() => setIsDebugOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-700"
+          >
+            Debug
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -356,7 +404,7 @@ export default function FaceLandmarkerApp() {
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
       {header}
 
-      <div className="w-full max-w-6xl mx-auto px-4 pb-20">
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20">
         {/* Controls */}
         <div className="grid md:grid-cols-3 gap-4 mb-6">
           <div className="p-4 rounded-2xl shadow-sm bg-white border border-slate-100 flex items-center justify-between">
@@ -422,8 +470,8 @@ export default function FaceLandmarkerApp() {
         </div>
 
         {/* Video + Canvas */}
-        <div className="grid lg:grid-cols-3 gap-6 items-start">
-          <div className="lg:col-span-2">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] items-start">
+          <div className="space-y-4">
             <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-black">
               <video
                 ref={videoRef}
@@ -447,49 +495,49 @@ export default function FaceLandmarkerApp() {
               )}
             </div>
             {loadingMsg && !isReady && (
-              <div className="mt-3 text-sm text-slate-600">{loadingMsg}</div>
+              <div className="text-sm text-slate-600">{loadingMsg}</div>
             )}
-          </div>
-
-          {/* Blendshapes */}
-          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
-            <h2 className="text-lg font-semibold mb-3">Blendshape Metrics</h2>
-            <p className="text-sm text-slate-600 mb-4">
-              Real-time expression coefficients (0.0–1.0) from the model — useful for animation or analytics.
-            </p>
-            <div className="space-y-2 max-h-[60vh] overflow-auto pr-1">
-              {blendShapes.length === 0 && (
-                <div className="text-sm text-slate-500">No face detected yet.</div>
-              )}
-              {blendShapes.map((b) => (
-                <div key={b.name} className="grid grid-cols-[140px_1fr_48px] items-center gap-2">
-                  <div className="text-right pr-2 text-xs text-slate-600 truncate">{b.name}</div>
-                  <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500"
-                      style={{ width: `${Math.max(0, Math.min(1, b.score)) * 100}%` }}
-                    />
-                  </div>
-                  <div className="text-right font-mono text-xs tabular-nums">{b.score.toFixed(3)}</div>
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
+              <h3 className="text-sm font-semibold mb-2">Active Gestures</h3>
+              {activeGestures.length === 0 ? (
+                <span className="text-slate-400 text-sm">None</span>
+              ) : (
+                <div className="flex gap-2 flex-wrap">
+                  {activeGestures.map((g) => (
+                    <span key={g} className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
+                      {g}
+                    </span>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           </div>
-          <div className="mt-3">
-            <h3 className="text-sm font-semibold mb-1">Active Gestures:</h3>
-            {activeGestures.length === 0 ? (
-              <span className="text-slate-400 text-sm">None</span>
-            ) : (
-              <div className="flex gap-2 flex-wrap">
-                {activeGestures.map((g) => (
-                  <span key={g} className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
-                    {g}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
 
+          <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4">
+            <h2 className="text-lg font-semibold mb-3">Word Navigator</h2>
+            <p className="text-sm text-slate-600 mb-4">
+              Use facial gestures to move across the grid. The active word is bolded; Select adds a green focus.
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              {words.map((word, index) => {
+                const isActiveWord = index === currentWordIndex;
+                const wordClasses = [
+                  "rounded-xl border px-4 py-6 text-center text-sm font-medium shadow-sm transition-colors",
+                  isActiveWord
+                    ? isSelectActive
+                      ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                      : "border-slate-300 bg-slate-100 text-slate-900"
+                    : "border-slate-100 bg-white text-slate-400"
+                ].join(" ");
+
+                return (
+                  <div key={word} className={wordClasses}>
+                    {word}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         {/* Transcription */}
@@ -532,6 +580,58 @@ export default function FaceLandmarkerApp() {
           </p>
         </div>
       </div>
+      <AnimatePresence>
+        {isDebugOpen && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsDebugOpen(false)}
+          >
+            <motion.div
+              className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 260, damping: 22 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Blendshape Metrics</h2>
+                  <p className="text-sm text-slate-600">Real-time expression coefficients (0.0–1.0).</p>
+                </div>
+                <button
+                  onClick={() => setIsDebugOpen(false)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent text-slate-500 transition hover:border-slate-200 hover:text-slate-700"
+                >
+                  <span className="sr-only">Close debug metrics</span>
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="max-h-[70vh] space-y-2 overflow-auto pr-1">
+                {blendShapes.length === 0 ? (
+                  <div className="text-sm text-slate-500">No face detected yet.</div>
+                ) : (
+                  blendShapes.map((b) => (
+                    <div key={b.name} className="grid grid-cols-[160px_1fr_64px] items-center gap-3">
+                      <div className="text-right pr-2 text-xs text-slate-600 truncate">{b.name}</div>
+                      <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-500"
+                          style={{ width: `${Math.max(0, Math.min(1, b.score)) * 100}%` }}
+                        />
+                      </div>
+                      <div className="text-right font-mono text-xs tabular-nums">{b.score.toFixed(3)}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
