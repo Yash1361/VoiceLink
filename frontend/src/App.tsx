@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Camera, CameraOff, Sparkles, Cpu, Activity, Play, Pause } from "lucide-react";
+import { useBlendshapeGestures } from "./hooks/useGesture";
+
 
 // MediaPipe Tasks (loaded at runtime from CDN)
 // We dynamically import to avoid SSR issues and to keep this as a single-file app.
@@ -31,7 +33,39 @@ export default function FaceLandmarkerApp() {
   const [interimTranscript, setInterimTranscript] = useState("");
   const [speechError, setSpeechError] = useState<string | null>(null);
 
+
   const videoWidth = 720; // Display width; canvas will scale to the stream size
+
+  const gestures = [
+    {
+      name: "Jaw open",
+      metric: "jawOpen",
+      threshold: 0.30,   // test with a low value to make it trigger
+      framesRequired: 1, // for testing, reduce frame requirement
+      onActivate: () => console.log("Jaw open triggered!")
+    },
+    {
+      name: "Left",
+      metric: "mouthLeft",
+      threshold: 0.30,   // test with a low value to make it trigger
+      framesRequired: 1, // for testing, reduce frame requirement
+      onActivate: () => console.log("Left triggered!")
+    },
+    {
+      name: "Right",
+      metric: "mouthRight",
+      threshold: 0.30,   // test with a low value to make it trigger
+      framesRequired: 1, // for testing, reduce frame requirement
+      onActivate: () => console.log("Right triggered!")
+    }
+  ];
+
+  const activeGestures = useBlendshapeGestures(blendShapes, gestures);
+
+
+  useBlendshapeGestures(blendShapes, gestures);
+
+
 
   const startCamera = useCallback(async () => {
     try {
@@ -281,7 +315,7 @@ export default function FaceLandmarkerApp() {
       if (!isRunning) return;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       if (faceLandmarkerRef.current) {
-        try { faceLandmarkerRef.current.close?.(); } catch {}
+        try { faceLandmarkerRef.current.close?.(); } catch { }
       }
       await loadModel();
       rafRef.current = requestAnimationFrame(loop);
@@ -427,6 +461,21 @@ export default function FaceLandmarkerApp() {
               ))}
             </div>
           </div>
+          <div className="mt-3">
+            <h3 className="text-sm font-semibold mb-1">Active Gestures:</h3>
+            {activeGestures.length === 0 ? (
+              <span className="text-slate-400 text-sm">None</span>
+            ) : (
+              <div className="flex gap-2 flex-wrap">
+                {activeGestures.map((g) => (
+                  <span key={g} className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
+                    {g}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
         </div>
 
         {/* Transcription */}
@@ -436,9 +485,8 @@ export default function FaceLandmarkerApp() {
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-3 min-h-[160px]">
               <div className="flex items-center gap-2 text-sm text-slate-500">
                 <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                    isTranscribing && isRunning ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
-                  }`}
+                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isTranscribing && isRunning ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+                    }`}
                 >
                   {isTranscribing && isRunning ? "Listening" : "Idle"}
                 </span>
