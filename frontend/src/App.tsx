@@ -40,23 +40,44 @@ export default function FaceLandmarkerApp() {
     {
       name: "Jaw open",
       metric: "jawOpen",
-      threshold: 0.30,   // test with a low value to make it trigger
-      framesRequired: 1, // for testing, reduce frame requirement
+      threshold: 0.30,
+      framesRequired: 3,
       onActivate: () => console.log("Jaw open triggered!")
     },
     {
       name: "Left",
       metric: "mouthLeft",
-      threshold: 0.30,   // test with a low value to make it trigger
-      framesRequired: 1, // for testing, reduce frame requirement
+      threshold: 0.30,
+      framesRequired: 1,
       onActivate: () => console.log("Left triggered!")
     },
     {
       name: "Right",
       metric: "mouthRight",
-      threshold: 0.30,   // test with a low value to make it trigger
-      framesRequired: 1, // for testing, reduce frame requirement
+      threshold: 0.30,
+      framesRequired: 3,
       onActivate: () => console.log("Right triggered!")
+    },
+    {
+      name: "Up",
+      metric: "browInnerUp",
+      threshold: 0.65,
+      framesRequired: 1,
+      onActivate: () => console.log("Up triggered!")
+    },
+    {
+      name: "Mouth Pucker",
+      metric: "mouthPucker",
+      threshold: 0.98,
+      framesRequired: 1,
+      onActivate: () => console.log("Pucker triggered!")
+    },
+    {
+      name: "Down",
+      metric: "mouthShrugLower",
+      threshold: 0.30,
+      framesRequired: 1,
+      onActivate: () => console.log("Down triggered!")
     }
   ];
 
