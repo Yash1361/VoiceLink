@@ -28,7 +28,10 @@ class AutocompleteService:
             self._chain = chain
         else:
             # Build chain lazily with explicit API key
-            self._chain = build_suggestion_chain(google_api_key=self.settings.google_api_key)
+            self._chain = build_suggestion_chain(
+                google_api_key=self.settings.google_api_key,
+                model_name=self.settings.gemini_model,
+            )
 
     def predict_next_words(
         self,

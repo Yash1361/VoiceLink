@@ -23,8 +23,8 @@ class DummyChain:
 
 @dataclass
 class DummySettings:
-    openai_api_key: str = "test-key"
-    openai_model: str = "gpt-4o-mini"
+    google_api_key: str = "test-key"
+    gemini_model: str = "gemini-2.5-flash"
     suggestions_count: int = 5
 
 

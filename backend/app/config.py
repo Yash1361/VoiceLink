@@ -7,7 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     google_api_key: str = Field(..., env="GOOGLE_API_KEY")
-    openai_model: str = Field("gpt-4o-mini", validation_alias="OPENAI_MODEL")
+    gemini_model: str = Field(
+        "gemini-2.5-flash",
+        validation_alias="GEMINI_MODEL",
+        description="Preferred Gemini model short name (e.g. 'gemini-2.5-pro').",
+    )
     suggestions_count: int = Field(
         5,
         ge=1,
