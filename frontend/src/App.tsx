@@ -38,7 +38,7 @@ export default function FaceLandmarkerApp() {
 
   const gestures = [
     {
-      name: "Jaw open",
+      name: "Select",
       metric: "jawOpen",
       threshold: 0.30,
       framesRequired: 3,
@@ -60,22 +60,15 @@ export default function FaceLandmarkerApp() {
     },
     {
       name: "Up",
-      metric: "browInnerUp",
+      metric: "browOuterUpLeft",
       threshold: 0.65,
       framesRequired: 1,
       onActivate: () => console.log("Up triggered!")
     },
     {
-      name: "Mouth Pucker",
-      metric: "mouthPucker",
-      threshold: 0.98,
-      framesRequired: 1,
-      onActivate: () => console.log("Pucker triggered!")
-    },
-    {
       name: "Down",
       metric: "mouthShrugLower",
-      threshold: 0.30,
+      threshold: 0.35,
       framesRequired: 1,
       onActivate: () => console.log("Down triggered!")
     }
