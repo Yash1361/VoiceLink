@@ -1,29 +1,56 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-export function useBlendshapeGestures(blendShapes: { name: string; score: number }[], gestures: any[]) {
+type MetricCondition = {
+  name: string;
+  threshold: number;
+  comparison?: ">" | "<" | string;
+};
+
+type Gesture = {
+  name: string;
+  metrics: MetricCondition[];
+  framesRequired: number;
+  onActivate?: () => void;
+};
+
+export function useBlendshapeGestures(
+  blendShapes: { name: string; score: number }[],
+  gestures: Gesture[]
+) {
+  const frameCountsRef = useRef<{ [key: string]: number }>({});
   const [activeGestures, setActiveGestures] = useState<string[]>([]);
-  const frameCountsRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
-    const newActive: string[] = [];
+    const newlyActive: string[] = [];
 
-    gestures.forEach((gesture) => {
-      const bs = blendShapes.find((b) => b.name === gesture.metric);
-      const score = bs?.score ?? 0;
+    for (const g of gestures) {
+      const allPassed = g.metrics.every((m) => {
+        const value = blendShapes.find((b) => b.name === m.name)?.score ?? 0;
+        return m.comparison === "<"
+          ? value < m.threshold
+          : value > m.threshold;
+      });
 
-      if (score >= gesture.threshold) {
-        frameCountsRef.current[gesture.name] = (frameCountsRef.current[gesture.name] || 0) + 1;
+      frameCountsRef.current[g.name] = frameCountsRef.current[g.name] || 0;
 
-        if (frameCountsRef.current[gesture.name] >= gesture.framesRequired) {
-          newActive.push(gesture.name);
-          gesture.onActivate?.();
-        }
+      if (allPassed) {
+        frameCountsRef.current[g.name] += 1;
       } else {
-        frameCountsRef.current[gesture.name] = 0;
+        frameCountsRef.current[g.name] = 0;
       }
-    });
 
-    setActiveGestures(newActive);
+      if (frameCountsRef.current[g.name] >= g.framesRequired) {
+        newlyActive.push(g.name);
+        g.onActivate?.();
+        frameCountsRef.current[g.name] = 0; // reset after trigger
+      }
+    }
+
+    if (newlyActive.length > 0) {
+      setActiveGestures(newlyActive);
+    } else {
+      setActiveGestures([]);
+    }
   }, [blendShapes, gestures]);
 
   return activeGestures;

@@ -43,49 +43,73 @@ export default function FaceLandmarkerApp() {
   const videoWidth = 720; // Display width; canvas will scale to the stream size
 
   const gestures = [
-    {
-      name: "Select",
-      metric: "jawOpen",
-      threshold: 0.40,
-      framesRequired: 3,
-      onActivate: () => console.log("Select triggered!")
-    },
-    {
-      name: "Left",
-      metric: "mouthLeft",
-      threshold: 0.30,
-      framesRequired: 1,
-      onActivate: () => console.log("Left triggered!")
-    },
-    {
-      name: "Right",
-      metric: "mouthRight",
-      threshold: 0.30,
-      framesRequired: 3,
-      onActivate: () => console.log("Right triggered!")
-    },
-    {
-      name: "Up",
-      metric: "browOuterUpLeft",
-      threshold: 0.7,
-      framesRequired: 1,
-      onActivate: () => console.log("Up triggered!")
-    },
-    {
-      name: "Down",
-      metric: "mouthShrugLower",
-      threshold: 0.35,
-      framesRequired: 1,
-      onActivate: () => console.log("Down triggered!")
-    },
-    {
-      name: "Open keyboard",
-      metric: "mouthFunnel",
-      threshold: 0.125,
-      framesRequired: 1,
-      onActivate: () => console.log("Open keyboard triggered!")
-    }
-  ];
+  {
+    name: "Select",
+    metrics: [
+      { name: "jawOpen", threshold: 0.4, comparison: ">" },
+    ],
+    framesRequired: 1,
+    onActivate: () => console.log("Select triggered!")
+  },
+  {
+    name: "Left",
+    metrics: [
+      { name: "mouthLeft", threshold: 0.50, comparison: ">" }
+    ],
+    framesRequired: 1,
+    onActivate: () => console.log("Left triggered!")
+  },
+  {
+    name: "Right",
+    metrics: [
+      { name: "mouthRight", threshold: 0.50 , comparison: ">" },
+    ],
+    framesRequired: 1,
+    onActivate: () => console.log("Right triggered!")
+  },
+  {
+    name: "Up",
+    metrics: [
+      { name: "browOuterUpLeft", threshold: 0.7, comparison: ">" }
+    ],
+    framesRequired: 1,
+    onActivate: () => console.log("Up triggered!")
+  },
+  {
+    name: "Down",
+    metrics: [
+      { name: "mouthShrugLower", threshold: 0.35, comparison: ">" }
+    ],
+    framesRequired: 1,
+    onActivate: () => console.log("Down triggered!")
+  },
+  {
+    name: "Open keyboard",
+    metrics: [
+      { name: "mouthSmileLeft", threshold: 0.5, comparison: ">" }
+    ],
+    framesRequired: 1,
+    onActivate: () => console.log("Open keyboard triggered!")
+  },
+  {
+    name: "Left Wink",
+    metrics: [
+      { name: "eyeBlinkLeft", threshold: 0.4, comparison: ">" as const },
+      { name: "eyeBlinkRight", threshold: 0.3, comparison: "<" as const },
+    ],
+    framesRequired: 1,
+    onActivate: () => console.log("😉 Left Wink detected!"),
+  },
+  {
+    name: "Right Wink",
+    metrics: [
+      { name: "eyeBlinkRight", threshold: 0.4, comparison: ">" as const },
+      { name: "eyeBlinkLeft", threshold: 0.3, comparison: "<" as const },
+    ],
+    framesRequired: 1,
+    onActivate: () => console.log("😉 Right Wink detected!"),
+  },
+];
 
   const activeGestures = useBlendshapeGestures(blendShapes, gestures);
   const totalWords = words.length;
