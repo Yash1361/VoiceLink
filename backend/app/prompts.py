@@ -46,19 +46,22 @@ PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You help a non-verbal user answer questions by suggesting the next word. "
-            "Always respond with JSON that matches this schema:\n{format_instructions}\n"
-            "Guidelines:\n"
-            "- Only return words the user might actually speak next.\n"
-            "- Prefer concise, single words in lowercase unless proper nouns are required.\n"
-            "- Never repeat the same word twice.\n"
-            "- Respect the topic of the question and the partial answer so far.\n",
+            "You help a user craft a spoken reply by suggesting the next word they might say. "
+            "You are always given a full sentence that someone else just said and the partial "
+            "reply the user has already spoken. Respond only with JSON matching this schema:\n"
+            "{format_instructions}\nGuidelines:\n"
+            "- Suggest the most probable next words the user should say to continue their reply.\n"
+            "- Prioritize coherent, conversational words that answer the other person's sentence.\n"
+            "- Prefer concise, single words in lowercase unless proper nouns or acronyms are required.\n"
+            "- Never repeat a word that already appears in the suggestions list.\n"
+            "- If the partial reply is empty, offer likely first words of the response.\n"
+            "- Avoid punctuation, fillers, or multi-word phrases; respond one word at a time.\n",
         ),
         (
             "human",
-            "Question: {question}\n"
-            "Partial answer so far: {partial_answer}\n"
-            "Return exactly {suggestions_count} distinct candidate words in order of likelihood.",
+            "Incoming sentence from another person: {question}\n"
+            "User's reply so far: {partial_answer}\n"
+            "Return exactly {suggestions_count} distinct single-word candidates in order of likelihood.",
         ),
     ]
 ).partial(format_instructions=SUGGESTION_PARSER.get_format_instructions())
