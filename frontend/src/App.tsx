@@ -395,23 +395,6 @@ export default function FaceLandmarkerApp() {
     };
   }, [stopCamera, stopTranscription]);
 
-  // When GPU toggle changes, reload the model with new delegate
-  useEffect(() => {
-    // If model is already loaded and app is running, reload quietly
-    const reload = async () => {
-      if (!isRunning) return;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      if (faceLandmarkerRef.current) {
-        try { faceLandmarkerRef.current.close?.(); } catch { }
-      }
-      await loadModel();
-      rafRef.current = requestAnimationFrame(loop);
-    };
-    // We only reload if already running to avoid surprising users
-    // They can also switch before starting.
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    reload();
-  }, [useGPU]);
 
   const header = (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-6">
@@ -439,38 +422,7 @@ export default function FaceLandmarkerApp() {
 
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20">
         {/* Controls */}
-        <div className="grid md:grid-cols-3 gap-4 mb-6">
-          <div className="p-4 rounded-2xl shadow-sm bg-white border border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Activity className="w-5 h-5" />
-              <span className="font-medium">Status</span>
-            </div>
-            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${isRunning ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-              {isRunning ? "Running" : "Stopped"}
-            </span>
-          </div>
-          <div className="p-4 rounded-2xl shadow-sm bg-white border border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Cpu className="w-5 h-5" />
-              <span className="font-medium">Delegate</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm mr-2">CPU</label>
-              <input type="checkbox" className="toggle toggle-sm" checked={useGPU} onChange={(e) => setUseGPU(e.target.checked)} />
-              <label className="text-sm">GPU</label>
-            </div>
-          </div>
-          <div className="p-4 rounded-2xl shadow-sm bg-white border border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Camera className="w-5 h-5" />
-              <span className="font-medium">FPS</span>
-            </div>
-            <span className="font-mono text-sm">{fps}</span>
-          </div>
-        </div>
-
-        {/* Action buttons */}
-        <div className="flex flex-wrap items-center gap-3 mb-8">
+        <div className="flex flex-wrap items-center gap-4 mb-8">
           {!isRunning ? (
             <button onClick={start} className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl shadow">
               <Play className="w-4 h-4" /> Start camera & detection
@@ -480,25 +432,19 @@ export default function FaceLandmarkerApp() {
               <Pause className="w-4 h-4" /> Stop
             </button>
           )}
-
-          <div className="flex items-center gap-4 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
-            <label className="text-sm">Line width</label>
-            <input
-              type="range"
-              min={1}
-              max={4}
-              value={lineWidth}
-              onChange={(e) => setLineWidth(parseInt(e.target.value))}
-            />
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={drawMesh} onChange={(e) => setDrawMesh(e.target.checked)} /> Mesh
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={drawContours} onChange={(e) => setDrawContours(e.target.checked)} /> Contours
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={drawIris} onChange={(e) => setDrawIris(e.target.checked)} /> Iris
-            </label>
+          
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+            <Activity className="w-5 h-5" />
+            <span className="font-medium">Status</span>
+            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${isRunning ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+              {isRunning ? "Running" : "Stopped"}
+            </span>
+          </div>
+          
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+            <Camera className="w-5 h-5" />
+            <span className="font-medium">FPS</span>
+            <span className="font-mono text-sm">{fps}</span>
           </div>
         </div>
 
