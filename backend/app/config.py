@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     google_api_key: str = Field(..., env="GOOGLE_API_KEY")
     gemini_model: str = Field(
-        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
         validation_alias="GEMINI_MODEL",
         description="Preferred Gemini model short name (e.g. 'gemini-2.5-pro').",
     )

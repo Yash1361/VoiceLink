@@ -7,7 +7,7 @@ from typing import Iterable
 from langchain_core.exceptions import OutputParserException
 
 from .config import Settings, get_settings
-from .prompts import build_suggestion_chain  # replace previous imports
+from .prompts import SuggestionBranch, build_suggestion_chain
 
 
 class SuggestionError(RuntimeError):
@@ -39,8 +39,8 @@ class AutocompleteService:
         question: str,
         partial_answer: str,
         suggestions_count: int | None = None,
-    ) -> list[str]:
-        """Predict the next word candidates synchronously."""
+    ) -> list[SuggestionBranch]:
+        """Predict the next-word suggestion tree synchronously."""
         count = suggestions_count or self.settings.suggestions_count
         try:
             payload = self._chain.invoke(
@@ -52,10 +52,10 @@ class AutocompleteService:
             )
         except OutputParserException as exc:  # pragma: no cover - defensive
             raise SuggestionError("Unable to parse suggestions from LLM") from exc
-        suggestions = _sanitize_suggestions(payload.suggestions, count)
-        if not suggestions:
+        tree = _sanitize_suggestions(payload.suggestions, count)
+        if not tree:
             raise SuggestionError("LLM returned no valid suggestions")
-        return suggestions
+        return tree
 
     async def apredict_next_words(
         self,
@@ -63,8 +63,8 @@ class AutocompleteService:
         question: str,
         partial_answer: str,
         suggestions_count: int | None = None,
-    ) -> list[str]:
-        """Predict the next word candidates asynchronously."""
+    ) -> list[SuggestionBranch]:
+        """Predict the next-word suggestion tree asynchronously."""
         count = suggestions_count or self.settings.suggestions_count
         try:
             payload = await self._chain.ainvoke(
@@ -76,25 +76,63 @@ class AutocompleteService:
             )
         except OutputParserException as exc:  # pragma: no cover - defensive
             raise SuggestionError("Unable to parse suggestions from LLM") from exc
-        suggestions = _sanitize_suggestions(payload.suggestions, count)
-        if not suggestions:
+        tree = _sanitize_suggestions(payload.suggestions, count)
+        if not tree:
             raise SuggestionError("LLM returned no valid suggestions")
-        return suggestions
+        return tree
 
 
-def _sanitize_suggestions(candidates: Iterable[str], limit: int) -> list[str]:
-    """Normalize suggestions by trimming, deduplicating, and limiting length."""
-    unique: list[str] = []
+def _sanitize_suggestions(
+    branches: Iterable[SuggestionBranch],
+    limit: int,
+    *,
+    max_depth: int = 4,
+) -> list[SuggestionBranch]:
+    """Normalize nested suggestions by trimming words, deduplicating per level, and enforcing depth."""
+
+    sanitized: list[SuggestionBranch] = []
     seen: set[str] = set()
-    for raw in candidates:
-        word = raw.strip()
-        if not word:
+    for branch in branches:
+        cleaned = _sanitize_branch(branch, depth=1, max_depth=max_depth)
+        if cleaned is None:
             continue
-        lowered = word.lower()
-        if lowered in seen:
+        key = cleaned.word.lower()
+        if key in seen:
             continue
-        seen.add(lowered)
-        unique.append(word)
-        if len(unique) >= limit:
+        seen.add(key)
+        sanitized.append(cleaned)
+        if len(sanitized) >= limit:
             break
-    return unique
+    return sanitized
+
+
+def _sanitize_branch(
+    branch: SuggestionBranch,
+    *,
+    depth: int,
+    max_depth: int,
+) -> SuggestionBranch | None:
+    word = branch.word.strip()
+    if not word:
+        return None
+
+    if depth >= max_depth:
+        children: list[SuggestionBranch] = []
+    else:
+        children = []
+        child_seen: set[str] = set()
+        for child in branch.next:
+            cleaned_child = _sanitize_branch(
+                child,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
+            if cleaned_child is None:
+                continue
+            key = cleaned_child.word.lower()
+            if key in child_seen:
+                continue
+            child_seen.add(key)
+            children.append(cleaned_child)
+
+    return SuggestionBranch(word=word, next=children)

@@ -6,6 +6,8 @@ Env:
   GOOGLE_API_KEY=<your key>
 """
 
+from __future__ import annotations
+
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
@@ -28,16 +30,35 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
+class SuggestionBranch(BaseModel):
+    """Single node in the nested suggestion tree."""
+
+    word: str = Field(
+        ...,
+        description=(
+            "A candidate word the user might speak at this turn."
+        ),
+    )
+    next: list["SuggestionBranch"] = Field(
+        default_factory=list,
+        description=(
+            "Possible follow-up words if the user selects this word."
+        ),
+    )
+
+
 class SuggestionPayload(BaseModel):
     """Structured response returned by the LLM."""
 
-    suggestions: list[str] = Field(
+    suggestions: list[SuggestionBranch] = Field(
         ...,
         description=(
-            "Ordered list of single-word suggestions ranked from most to least likely "
-            "as the user's next word."
+            "Nested tree of candidate words with follow-up options for the next 3-4 turns."
         ),
     )
+
+
+SuggestionBranch.model_rebuild()
 
 
 SUGGESTION_PARSER = PydanticOutputParser(pydantic_object=SuggestionPayload)
@@ -46,22 +67,21 @@ PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You help a user craft a spoken reply by suggesting the next word they might say. "
-            "You are always given a full sentence that someone else just said and the partial "
-            "reply the user has already spoken. Respond only with JSON matching this schema:\n"
-            "{format_instructions}\nGuidelines:\n"
-            "- Suggest the most probable next words the user should say to continue their reply.\n"
-            "- Prioritize coherent, conversational words that answer the other person's sentence.\n"
-            "- Prefer concise, single words in lowercase unless proper nouns or acronyms are required.\n"
-            "- Never repeat a word that already appears in the suggestions list.\n"
-            "- If the partial reply is empty, offer likely first words of the response.\n"
-            "- Avoid punctuation, fillers, or multi-word phrases; respond one word at a time.\n",
+            "You help a user craft a spoken reply by building a branching tree of next-word suggestions. "
+            "You are always given a full sentence that someone else just said and the partial reply the user "
+            "has already spoken. Respond only with JSON matching this schema:\n{format_instructions}\nGuidelines:\n"
+            "- Provide exactly {suggestions_count} root-level options ordered from most to least likely.\n"
+            "- Every 'word' must be a single conversational word in lowercase unless a proper noun or acronym is required.\n"
+            "- For each root option, populate `next` with 2-3 follow-up words and continue expanding each branch until it reaches a depth of at least 3 levels (root + 2) and at most 4.\n"
+            "- Ensure each follow-up word is contextually coherent given the previous selections and the incoming sentence.\n"
+            "- Do not repeat the same word within the same branch. Trim whitespace and omit punctuation or fillers.\n"
+            "- If a branch cannot continue naturally, leave its `next` list empty but explore alternative continuations elsewhere.\n",
         ),
         (
             "human",
             "Incoming sentence from another person: {question}\n"
             "User's reply so far: {partial_answer}\n"
-            "Return exactly {suggestions_count} distinct single-word candidates in order of likelihood.",
+            "Produce a nested tree of candidate words following the schema above.",
         ),
     ]
 ).partial(format_instructions=SUGGESTION_PARSER.get_format_instructions())

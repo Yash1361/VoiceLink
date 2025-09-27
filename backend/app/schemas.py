@@ -4,6 +4,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from .prompts import SuggestionBranch
+
 
 class SuggestionRequest(BaseModel):
     """Incoming payload from the frontend."""
@@ -16,4 +18,4 @@ class SuggestionRequest(BaseModel):
 class SuggestionResponse(BaseModel):
     """Response returned to the frontend."""
 
-    suggestions: list[str]
+    suggestions: list[SuggestionBranch]
