@@ -268,6 +268,7 @@ export default function FaceLandmarkerApp() {
   const [isSubmitPressed, setIsSubmitPressed] = useState(false);
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const [typedBuffer, setTypedBuffer] = useState("");
+  const [activeQuestion, setActiveQuestion] = useState<string | null>(null);
   const [isDeveloperMode, setIsDeveloperMode] = useState(false);
   const [sentenceViewportColumns, setSentenceViewportColumns] = useState<number>(() =>
     getSentenceViewportColumns()
@@ -376,6 +377,7 @@ export default function FaceLandmarkerApp() {
   const prevActiveGesturesRef = useRef<string[]>([]);
   const submitFlashTimeoutRef = useRef<number | null>(null);
   const keyboardToggleCooldownRef = useRef<number>(0);
+  const suggestionRequestIdRef = useRef(0);
   const responseText = useMemo(() => {
     const parts = [...responseWords];
     if (typedBuffer) {
@@ -384,6 +386,132 @@ export default function FaceLandmarkerApp() {
     return parts.join(" ");
   }, [responseWords, typedBuffer]);
   const trimmedResponse = useMemo(() => responseText.trim(), [responseText]);
+  const requestSuggestions = useCallback(
+    async ({
+      partialAnswer,
+      question,
+      conversationContext,
+      loadingMessage = "Updating suggestions...",
+    }: {
+      partialAnswer: string;
+      question?: string | null;
+      conversationContext?: string;
+      loadingMessage?: string;
+    }) => {
+      const resolvedQuestion = (question ?? activeQuestion ?? "").trim();
+      if (!resolvedQuestion) {
+        return false;
+      }
+
+      const resolvedConversation =
+        conversationContext ??
+        conversationHistory
+          .map((entry) => `${entry.role}: ${entry.text}`)
+          .join("\n");
+
+      const payload = {
+        question: resolvedQuestion,
+        partial_answer: partialAnswer,
+        conversation: resolvedConversation,
+        suggestions_count: 5,
+      };
+
+      const requestId = ++suggestionRequestIdRef.current;
+
+      if (loadingMessage) {
+        setNavigatorOptions([loadingMessage]);
+      }
+      setCurrentSuggestions([]);
+      setSentenceSuggestions([]);
+      setCurrentWordIndex(0);
+      setIsLoadingSuggestions(true);
+
+      try {
+        console.log("[Suggestions] Request payload", payload);
+        const response = await fetch(SUGGEST_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Suggestion request failed: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (suggestionRequestIdRef.current !== requestId) {
+          return false;
+        }
+
+        const rawSuggestions = Array.isArray(data?.suggestions) ? data.suggestions : [];
+        const rawSentences = Array.isArray(data?.sentences) ? data.sentences : [];
+
+        const normalizeNode = (node: any): SuggestionNode | null => {
+          if (!node || typeof node.word !== "string") return null;
+          const word = node.word.trim();
+          if (!word) return null;
+          const nextRaw = Array.isArray(node.next) ? node.next : [];
+          const next = nextRaw
+            .map((child: any) => normalizeNode(child))
+            .filter(Boolean) as SuggestionNode[];
+          return { word, next };
+        };
+
+        const normalized = rawSuggestions
+          .map((node: any) => normalizeNode(node))
+          .filter(Boolean) as SuggestionNode[];
+
+        const normalizedSentences = rawSentences
+          .map((entry: any) => {
+            const style = typeof entry?.style === "string" ? entry.style.trim().toLowerCase() : "";
+            const text = typeof entry?.text === "string" ? entry.text.trim() : "";
+            if (!text) return null;
+            return {
+              style: style || "smart",
+              text,
+            } as SentenceSuggestion;
+          })
+          .filter(Boolean) as SentenceSuggestion[];
+
+        const preferredOrder = ["smart", "funny", "casual"];
+        normalizedSentences.sort((a, b) => {
+          const rankA = preferredOrder.indexOf(a.style);
+          const rankB = preferredOrder.indexOf(b.style);
+          const safeRankA = rankA === -1 ? preferredOrder.length : rankA;
+          const safeRankB = rankB === -1 ? preferredOrder.length : rankB;
+          return safeRankA - safeRankB;
+        });
+
+        setSentenceSuggestions(normalizedSentences.slice(0, 3));
+
+        if (normalized.length > 0) {
+          setCurrentSuggestions(normalized);
+          setNavigatorOptions(normalized.map((node) => node.word));
+        } else {
+          setCurrentSuggestions([]);
+          setNavigatorOptions(["No suggestions available", "Start Typing"]);
+        }
+
+        return true;
+      } catch (error) {
+        if (suggestionRequestIdRef.current === requestId) {
+          console.error("Failed to load suggestions", error);
+          setCurrentSuggestions([]);
+          setSentenceSuggestions([]);
+          setNavigatorOptions(["Unable to load responses", "Start Typing"]);
+        }
+        return false;
+      } finally {
+        if (suggestionRequestIdRef.current === requestId) {
+          setIsLoadingSuggestions(false);
+        }
+      }
+    },
+    [activeQuestion, conversationHistory]
+  );
   const gridOptions = useMemo<NavigatorGridOption[]>(
     () => {
       const options: NavigatorGridOption[] = [
@@ -416,6 +544,8 @@ export default function FaceLandmarkerApp() {
     setCurrentWordIndex(0);
     setSentenceSuggestions([]);
     setIsSubmitPressed(false);
+    setActiveQuestion(null);
+    suggestionRequestIdRef.current += 1;
     setIsKeyboardOpen(false);
     setTypedBuffer("");
     if (submitFlashTimeoutRef.current !== null) {
@@ -1070,13 +1200,17 @@ export default function FaceLandmarkerApp() {
           break;
         }
         case "space": {
-          setTypedBuffer((prev) => {
-            const trimmed = prev.trim();
-            if (!trimmed) {
-              return "";
-            }
-            setResponseWords((words) => [...words, trimmed]);
-            return "";
+          const trimmed = typedBuffer.trim();
+          if (!trimmed) {
+            setTypedBuffer("");
+            break;
+          }
+          const nextWords = [...responseWords, trimmed];
+          setResponseWords(nextWords);
+          setTypedBuffer("");
+          setSentenceSuggestions([]);
+          void requestSuggestions({
+            partialAnswer: nextWords.join(" "),
           });
           break;
         }
@@ -1101,6 +1235,10 @@ export default function FaceLandmarkerApp() {
         case "clear": {
           setResponseWords([]);
           setTypedBuffer("");
+          setSentenceSuggestions([]);
+          void requestSuggestions({
+            partialAnswer: "",
+          });
           break;
         }
         case "enter": {
@@ -1120,8 +1258,13 @@ export default function FaceLandmarkerApp() {
             setTypedBuffer("");
             return;
           }
-          setResponseWords((words) => [...words, finalWord]);
+          const nextWords = [...responseWords, finalWord];
+          setResponseWords(nextWords);
           setTypedBuffer("");
+          setSentenceSuggestions([]);
+          void requestSuggestions({
+            partialAnswer: nextWords.join(" "),
+          });
           break;
         }
         case "noop": {
@@ -1131,7 +1274,7 @@ export default function FaceLandmarkerApp() {
           break;
       }
     },
-    [handleSubmitResponse, responseWords, typedBuffer]
+    [handleSubmitResponse, requestSuggestions, responseWords, typedBuffer]
   );
 
   const handleSelectGesture = useCallback(async () => {
@@ -1197,108 +1340,28 @@ export default function FaceLandmarkerApp() {
         return;
       }
 
-      setIsLoadingSuggestions(true);
-      setNavigatorOptions(["Loading Responses..."]);
-      setCurrentSuggestions([]);
-      setCurrentWordIndex(0);
-      setSentenceSuggestions([]);
-
       stopTranscription();
 
-      try {
-        const partialAnswer = trimmedResponse;
-        let updatedHistory = conversationHistory;
-        if (questionText) {
-          const lastEntry = conversationHistory[conversationHistory.length - 1];
-          if (!lastEntry || lastEntry.role !== "guest" || lastEntry.text !== questionText) {
-            updatedHistory = [...conversationHistory, { role: "guest", text: questionText }];
-            setConversationHistory(updatedHistory);
-          }
+      const partialAnswer = trimmedResponse;
+      let updatedHistory = conversationHistory;
+      if (questionText) {
+        const lastEntry = conversationHistory[conversationHistory.length - 1];
+        if (!lastEntry || lastEntry.role !== "guest" || lastEntry.text !== questionText) {
+          updatedHistory = [...conversationHistory, { role: "guest", text: questionText }];
+          setConversationHistory(updatedHistory);
         }
-        const conversationContext = updatedHistory
-          .map((entry) => `${entry.role}: ${entry.text}`)
-          .join("\n");
-        console.log("[Suggestions] Request payload", {
-          question: questionText,
-          partialAnswer,
-          conversation: conversationContext,
-        });
-        const response = await fetch(SUGGEST_ENDPOINT, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            question: questionText,
-            partial_answer: partialAnswer,
-            conversation: conversationContext,
-            suggestions_count: 5,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Suggestion request failed: ${response.status}`);
-        }
-
-        const payload = await response.json();
-        const rawSuggestions = Array.isArray(payload?.suggestions) ? payload.suggestions : [];
-
-        const normalizeNode = (node: any): SuggestionNode | null => {
-          if (!node || typeof node.word !== "string") return null;
-          const word = node.word.trim();
-          if (!word) return null;
-          const nextRaw = Array.isArray(node.next) ? node.next : [];
-          const next = nextRaw
-            .map((child: any) => normalizeNode(child))
-            .filter(Boolean) as SuggestionNode[];
-          return { word, next };
-        };
-
-        const rawSentences = Array.isArray(payload?.sentences) ? payload.sentences : [];
-
-        const normalizedSentences = rawSentences
-          .map((entry: any) => {
-            const style = typeof entry?.style === "string" ? entry.style.trim().toLowerCase() : "";
-            const text = typeof entry?.text === "string" ? entry.text.trim() : "";
-            if (!text) return null;
-            return {
-              style: style || "smart",
-              text,
-            } as SentenceSuggestion;
-          })
-          .filter(Boolean) as SentenceSuggestion[];
-
-        const preferredOrder = ["smart", "funny", "casual"];
-        normalizedSentences.sort((a, b) => {
-          const rankA = preferredOrder.indexOf(a.style);
-          const rankB = preferredOrder.indexOf(b.style);
-          const safeRankA = rankA === -1 ? preferredOrder.length : rankA;
-          const safeRankB = rankB === -1 ? preferredOrder.length : rankB;
-          return safeRankA - safeRankB;
-        });
-
-        setSentenceSuggestions(normalizedSentences.slice(0, 3));
-
-        const normalized = rawSuggestions
-          .map((node: any) => normalizeNode(node))
-          .filter(Boolean) as SuggestionNode[];
-
-        if (normalized.length > 0) {
-          setCurrentSuggestions(normalized);
-          setNavigatorOptions(normalized.map((node) => node.word));
-        } else {
-          setNavigatorOptions(["No suggestions available", "Start Typing"]);
-          setCurrentSuggestions([]);
-        }
-      } catch (err) {
-        console.error("Failed to load suggestions", err);
-        setNavigatorOptions(["Unable to load responses", "Start Typing"]);
-        setCurrentSuggestions([]);
-        setSentenceSuggestions([]);
-      } finally {
-        setIsLoadingSuggestions(false);
       }
+      const conversationContext = updatedHistory
+        .map((entry) => `${entry.role}: ${entry.text}`)
+        .join("\n");
 
+      setActiveQuestion(questionText);
+      void requestSuggestions({
+        question: questionText,
+        partialAnswer,
+        conversationContext,
+        loadingMessage: "Loading Responses...",
+      });
       return;
     }
 
@@ -1342,7 +1405,6 @@ export default function FaceLandmarkerApp() {
     handleSubmitResponse,
     interimTranscript,
     isLoadingSuggestions,
-    navigatorOptions,
     requestRepeatPrompt,
     resetNavigator,
     sentenceSuggestions,
