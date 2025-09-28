@@ -566,13 +566,20 @@ export default function FaceLandmarkerApp() {
 
       if (direction === "Right") {
         if (inSentences) {
-          const nextIndex = current + 1;
-          const sameRow =
-            Math.floor(current / sentenceCols) === Math.floor(nextIndex / sentenceCols);
-          if (nextIndex < sentenceCount && sameRow) {
-            return nextIndex;
+          const row = Math.floor(current / sentenceCols);
+          const rowStart = row * sentenceCols;
+          if (rowStart >= sentenceCount) {
+            return current;
           }
-          return current;
+          const rowLength = Math.min(sentenceCols, sentenceCount - rowStart);
+          if (rowLength <= 0) {
+            return current;
+          }
+          const column = current - rowStart;
+          if (column + 1 < rowLength && current + 1 < sentenceCount) {
+            return current + 1;
+          }
+          return rowStart;
         }
 
         if (inWords) {
@@ -590,7 +597,7 @@ export default function FaceLandmarkerApp() {
           if (column + 1 < rowLength) {
             return current + 1;
           }
-          return current;
+          return sentenceCount + rowStart;
         }
 
         if (inSubmit) {
@@ -607,8 +614,11 @@ export default function FaceLandmarkerApp() {
             if (option) {
               const rowStart = keyboardRowStarts[option.row] ?? 0;
               const rowLength = keyboardRowLengths[option.row] ?? 0;
-              if (option.column + 1 < rowLength) {
-                return keyboardStart + rowStart + option.column + 1;
+              if (rowLength > 0) {
+                if (option.column + 1 < rowLength) {
+                  return keyboardStart + rowStart + option.column + 1;
+                }
+                return keyboardStart + rowStart;
               }
             }
           }
@@ -623,9 +633,16 @@ export default function FaceLandmarkerApp() {
           const keyboardIndex = current - keyboardStart;
           if (keyboardIndex >= 0 && keyboardIndex < keyboardOptions.length) {
             const option = keyboardOptions[keyboardIndex];
-            if (option && option.column > 0) {
+            if (option) {
               const rowStart = keyboardRowStarts[option.row] ?? 0;
-              return keyboardStart + rowStart + option.column - 1;
+              const rowLength = keyboardRowLengths[option.row] ?? 0;
+              if (rowLength <= 0) {
+                return current;
+              }
+              if (option.column > 0) {
+                return keyboardStart + rowStart + option.column - 1;
+              }
+              return keyboardStart + rowStart + rowLength - 1;
             }
           }
           return current;
@@ -650,15 +667,30 @@ export default function FaceLandmarkerApp() {
           if (column > 0) {
             return current - 1;
           }
-          return current;
+          const row = Math.floor(position / wordCols);
+          const rowStart = row * wordCols;
+          const rowLength = Math.min(wordCols, wordCount - rowStart);
+          if (rowLength <= 0) {
+            return current;
+          }
+          return sentenceCount + rowStart + rowLength - 1;
         }
 
         if (inSentences) {
-          const column = current % sentenceCols;
+          const row = Math.floor(current / sentenceCols);
+          const rowStart = row * sentenceCols;
+          if (rowStart >= sentenceCount) {
+            return current;
+          }
+          const rowLength = Math.min(sentenceCols, sentenceCount - rowStart);
+          if (rowLength <= 0) {
+            return current;
+          }
+          const column = current - rowStart;
           if (column > 0) {
             return current - 1;
           }
-          return current;
+          return rowStart + rowLength - 1;
         }
 
         return clampToRange(current);
