@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Camera, CameraOff, Sparkles, Activity, Play, Pause, X, Cpu } from "lucide-react";
 import { useBlendshapeGestures } from "./hooks/useGesture";
 import Keyboard, { LETTERS, SPECIAL_KEYS } from "./components/keyboard";
+import { ask, AGENT_ID } from "./utils/asiAI";
 
 
 // MediaPipe Tasks (loaded at runtime from CDN)
@@ -386,6 +387,115 @@ export default function FaceLandmarkerApp() {
   const [agentKeyboardValue, setAgentKeyboardValue] = useState("");
   const [isAgentKeyboardOpen, setIsAgentKeyboardOpen] = useState(false);
   const [agentKeyboardSelection, setAgentKeyboardSelection] = useState(0);
+
+  // Chat state for ASI AI testing
+  const [chatMessages, setChatMessages] = useState<{role: 'user' | 'assistant', content: string}[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+
+  // ASI AI Test Function
+  const testASIAI = useCallback(async () => {
+    console.log('🚀 Testing ASI AI functionality...');
+    console.log('Agent ID:', AGENT_ID);
+    
+    try {
+      const convId = 'test-conversation-' + Date.now();
+      const testMessages = [
+        { 
+          role: 'user', 
+          content: 'Hello! Can you help me test this connection?' 
+        }
+      ];
+      
+      console.log('📤 Sending test message:', testMessages);
+      console.log('🔗 Conversation ID:', convId);
+      
+      // Test non-streaming first
+      console.log('📝 Testing non-streaming response...');
+      try {
+        const response1 = await ask(convId, testMessages, false);
+        console.log('✅ Non-streaming response:', response1);
+        console.log('✅ Non-streaming response length:', response1?.length || 0);
+      } catch (error) {
+        console.error('❌ Non-streaming test failed:', error);
+      }
+      
+      // Test streaming
+      console.log('🌊 Testing streaming response...');
+      try {
+        const streamMessages = [
+          { 
+            role: 'user', 
+            content: 'What is 2+2?' 
+          }
+        ];
+        const response2 = await ask(convId + '-stream', streamMessages, true);
+        console.log('✅ Streaming response completed:', response2);
+        console.log('✅ Streaming response length:', response2?.length || 0);
+      } catch (error) {
+        console.error('❌ Streaming test failed:', error);
+      }
+      
+    } catch (error) {
+      console.error('❌ ASI AI test failed:', error);
+    }
+  }, []);
+
+  // Chat functionality
+  const sendChatMessage = useCallback(async () => {
+    if (!chatInput.trim() || isChatLoading) return;
+    
+    const userMessage = { role: 'user' as const, content: chatInput.trim() };
+    const newMessages = [...chatMessages, userMessage];
+    setChatMessages(newMessages);
+    setChatInput('');
+    setIsChatLoading(true);
+    
+    try {
+      const convId = 'chat-' + Date.now();
+      console.log('🚀 Sending chat message:', userMessage.content);
+      
+      // Use non-streaming since it shows response length > 0
+      console.log('📝 Using non-streaming request (preferred)...');
+      const response = await ask(convId, newMessages, false);
+      
+      console.log('✅ Received response:', response);
+      console.log('✅ Response length:', response?.length || 0);
+      
+      if (!response || response.trim() === '') {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: "⚠️ Empty response received. Please try again." }]);
+      } else {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: response }]);
+      }
+      
+    } catch (error) {
+      console.error('❌ Chat error:', error);
+      const errorMessage = `Error: ${error instanceof Error ? error.message : 'Failed to get response'}. Check console for details.`;
+      setChatMessages(prev => [...prev, { role: 'assistant', content: errorMessage }]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  }, [chatInput, chatMessages, isChatLoading]);
+
+  const handleChatKeyPress = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  }, [sendChatMessage]);
+
+  // Run ASI AI test when component mounts (only once)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // Add a small delay to ensure everything is loaded
+      const timer = setTimeout(() => {
+        testASIAI();
+      }, 2000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, []); // Empty dependency array means this runs once on mount
 
   const columns = Math.min(3, Math.max(1, navigatorOptions.length));
   const handleKeyboardToggle = useCallback(() => {
@@ -3102,6 +3212,101 @@ export default function FaceLandmarkerApp() {
             This demo runs entirely in your browser using WebAssembly/WebGL via MediaPipe Tasks Vision. No video is
             uploaded.
           </p>
+        </div>
+
+        {/* ASI AI Chat Interface */}
+        <div className="mt-8">
+          <button
+            onClick={() => setShowChat(!showChat)}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl shadow mb-4"
+          >
+            <Sparkles className="w-4 h-4" />
+            {showChat ? 'Hide' : 'Show'} ASI AI Chat
+          </button>
+
+          {showChat && (
+            <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold">ASI AI Chat Test</h3>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setChatMessages([])}
+                    className="text-xs px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors"
+                  >
+                    Clear Chat
+                  </button>
+                  <div className="text-xs text-slate-500">
+                    Agent: {AGENT_ID.slice(0, 20)}...
+                  </div>
+                </div>
+              </div>
+
+              {/* Chat Messages */}
+              <div className="space-y-3 max-h-96 overflow-y-auto border border-slate-100 rounded-xl p-4 bg-slate-50">
+                {chatMessages.length === 0 ? (
+                  <div className="text-slate-400 text-center py-8">
+                    No messages yet. Start a conversation!
+                  </div>
+                ) : (
+                  chatMessages.map((message, index) => (
+                    <div
+                      key={index}
+                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[80%] px-4 py-2 rounded-2xl text-sm ${
+                          message.role === 'user'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white border border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {message.content}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {isChatLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-2xl text-sm">
+                      <span className="inline-flex items-center gap-1">
+                        <span className="animate-pulse">●</span>
+                        <span className="animate-pulse" style={{ animationDelay: '0.2s' }}>●</span>
+                        <span className="animate-pulse" style={{ animationDelay: '0.4s' }}>●</span>
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Input */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyPress={handleChatKeyPress}
+                  placeholder="Type your message... (e.g., 'use Hi-dream model to generate image of monkey')"
+                  className="flex-1 px-4 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isChatLoading}
+                />
+                <button
+                  onClick={sendChatMessage}
+                  disabled={!chatInput.trim() || isChatLoading}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
+                >
+                  Send
+                </button>
+              </div>
+
+              <div className="text-xs text-slate-500">
+                💡 Try asking: "use Hi-dream model to generate image of monkey sitting on top of mountain"
+                <br />
+                🔧 If you get "No content received", the agent might be processing or needs time to respond.
+                <br />
+                📊 Check browser console (F12) for detailed debug information.
+              </div>
+            </div>
+          )}
         </div>
       </div>
       {renderAgentPopup()}
