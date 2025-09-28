@@ -1,457 +1,397 @@
 #!/usr/bin/env python3
-"""
-Airbnb MCP Agent for Agentverse
+"""Amazon MCP Agent for Agentverse.
 
-Provides real-time Airbnb property search and booking information 
-via Airbnb MCP server integration. Makes it discoverable on ASI:One LLM.
+This agent exposes the Amazon MCP server through the uAgents chat protocol so
+users can search for products, review offers, and check orders from Amazon via
+natural language conversations.
 """
 
-import os
 import json
-import asyncio
-import secrets
-from typing import Dict, Any, Optional
-from contextlib import AsyncExitStack
+import os
 import time
-import mcp
-from mcp.client.stdio import stdio_client
-from uagents import Agent, Context, Protocol, Model
-from uagents_core.contrib.protocols.chat import (
-    chat_protocol_spec,
-    ChatMessage,
-    ChatAcknowledgement,
-    TextContent,
-    EndSessionContent,
-    StartSessionContent,
-)
+from contextlib import AsyncExitStack
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
+
+import mcp
 from dotenv import load_dotenv
+from mcp.client.stdio import stdio_client
+from uagents import Agent, Context, Protocol
+from uagents_core.contrib.protocols.chat import (
+    ChatAcknowledgement,
+    ChatMessage,
+    TextContent,
+    chat_protocol_spec,
+)
 
 try:
     from anthropic import Anthropic
-except ModuleNotFoundError as exc:
+except ModuleNotFoundError as exc:  # pragma: no cover - import guard
     raise ModuleNotFoundError(
         "Missing optional dependency 'anthropic'. Install it with 'pip install anthropic'."
     ) from exc
 
-# --- Agent Configuration ---
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
-# Load environment variables from a .env file
 load_dotenv()
 
-# Get API keys
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not ANTHROPIC_API_KEY:
-    raise ValueError("ANTHROPIC_API_KEY not found in .env file")
+    raise ValueError("ANTHROPIC_API_KEY not found. Set it in your environment or .env file.")
 
-AGENT_NAME = "airbnb_agent"
-AGENT_PORT = 8008
+AGENT_NAME = os.getenv("AMAZON_AGENT_NAME", "amazon_agent")
+AGENT_PORT = int(os.getenv("AMAZON_AGENT_PORT", "8008"))
 
-# User sessions store: session_id -> {authenticated, last_activity}
+AMAZON_MCP_COMMAND = os.getenv("AMAZON_MCP_COMMAND", "uvx")
+_raw_args = os.getenv("AMAZON_MCP_ARGS")
+if _raw_args:
+    AMAZON_MCP_ARGS = _raw_args.split()
+else:
+    AMAZON_MCP_ARGS = ["amazon-mcp"]
+
+default_timeout = 30 * 60  # 30 minutes
+SESSION_TIMEOUT = int(os.getenv("AMAZON_SESSION_TIMEOUT_SECONDS", str(default_timeout)))
+
+# Session storage: session_id -> metadata
 user_sessions: Dict[str, Dict[str, Any]] = {}
 
-# Session timeout (30 minutes)
-SESSION_TIMEOUT = 30 * 60
 
-# --- MCP Client Logic ---
+# ---------------------------------------------------------------------------
+# MCP client wrapper
+# ---------------------------------------------------------------------------
 
-class AirbnbMCPClient:
-    """Airbnb MCP Client for property search and booking assistance"""
-    
-    def __init__(self, ctx: Context):
+class AmazonMCPClient:
+    """Thin wrapper around the amazon-mcp server with Anthropic tool calling."""
+
+    def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
-        self._session: mcp.ClientSession = None
         self._exit_stack = AsyncExitStack()
+        self._session: Optional[mcp.ClientSession] = None
         self.anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
-        self.tools = []  # Will be populated after connection
+        self.tools: List[Dict[str, Any]] = []
 
-    async def connect(self):
-        """Connect to Airbnb MCP server via npx"""
+    async def connect(self) -> None:
+        """Launch the MCP server (if needed) and cache the tool manifest."""
+        if self._session is not None:
+            return
+
         try:
-            self._ctx.logger.info("Connecting to Airbnb MCP server via npx...")
-            
-            # Connect to the Airbnb MCP server using npx
-            server_params = mcp.StdioServerParameters(
-                command="npx",
-                args=["-y", "@openbnb/mcp-server-airbnb", "--ignore-robots-txt"],
-                env=None
+            self._ctx.logger.info(
+                "Starting Amazon MCP server using '%s %s'",
+                AMAZON_MCP_COMMAND,
+                " ".join(AMAZON_MCP_ARGS),
             )
-            
-            stdio_transport = await self._exit_stack.enter_async_context(
+
+            server_params = mcp.StdioServerParameters(
+                command=AMAZON_MCP_COMMAND,
+                args=AMAZON_MCP_ARGS,
+                env=None,  # inherit current environment (incl. FEWSATS_API_KEY if set)
+            )
+
+            reader, writer = await self._exit_stack.enter_async_context(
                 stdio_client(server_params)
             )
-            
+
             self._session = await self._exit_stack.enter_async_context(
-                mcp.ClientSession(stdio_transport[0], stdio_transport[1])
+                mcp.ClientSession(reader, writer)
             )
-            
             await self._session.initialize()
-            
-            # Get available tools
-            list_tools_response = await self._session.list_tools()
-            mcp_tools = list_tools_response.tools
-            
-            self._ctx.logger.info(f"Connected to Airbnb MCP server with {len(mcp_tools)} tools")
-            for tool in mcp_tools:
-                self._ctx.logger.info(f"Available tool: {tool.name}")
-            
-            # Convert MCP tools to Anthropic format
-            self.tools = self._convert_mcp_tools_to_anthropic_format(mcp_tools)
-            
-        except Exception as e:
-            self._ctx.logger.error(f"Failed to connect to Airbnb MCP server: {e}")
+
+            tools_response = await self._session.list_tools()
+            self.tools = self._convert_mcp_tools_to_anthropic_format(tools_response.tools)
+
+            self._ctx.logger.info("Amazon MCP connected with %d tools", len(self.tools))
+            for tool in tools_response.tools:
+                self._ctx.logger.info("Tool available: %s", tool.name)
+
+        except Exception as exc:  # pragma: no cover - depends on runtime environment
+            self._ctx.logger.error("Failed to connect to Amazon MCP server: %s", exc)
             raise
 
-    def _convert_mcp_tools_to_anthropic_format(self, mcp_tools):
-        """Convert MCP tool definitions to Anthropic tool format"""
-        anthropic_tools = []
-        for tool in mcp_tools:
-            anthropic_tool = {
-                "name": tool.name,
-                "description": tool.description or f"Airbnb tool: {tool.name}",
-                "input_schema": tool.inputSchema or {"type": "object", "properties": {}}
-            }
-            anthropic_tools.append(anthropic_tool)
-        return anthropic_tools
+    def _convert_mcp_tools_to_anthropic_format(self, tools: List[Any]) -> List[Dict[str, Any]]:
+        formatted: List[Dict[str, Any]] = []
+        for tool in tools:
+            formatted.append(
+                {
+                    "name": tool.name,
+                    "description": getattr(tool, "description", "") or f"Amazon tool: {tool.name}",
+                    "input_schema": getattr(tool, "inputSchema", None) or {
+                        "type": "object",
+                        "properties": {},
+                    },
+                }
+            )
+        return formatted
 
     async def process_query(self, query: str) -> str:
-        """Process user query using Anthropic for tool selection and then call Airbnb tools"""
-        self._ctx.logger.info(f"Processing Airbnb query: '{query}'")
+        """Route a natural language query through Claude tool-calling."""
+        await self.connect()
+        assert self._session is not None  # for type checkers
+
+        self._ctx.logger.info("Processing query: %s", query)
+
         try:
-            # Let Claude decide how to use the Airbnb tools
             response = self.anthropic.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=4096,
-                messages=[{
-                    "role": "user", 
-                    "content": f"""Help me with this Airbnb request: {query}
-
-Please use the available Airbnb tools to search for properties, get listing details, or provide accommodation assistance. 
-Make sure to provide helpful, accurate information about available properties and booking options."""
-                }],
+                max_tokens=2048,
                 tools=self.tools,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "You are an e-commerce concierge."
+                            " Use the available Amazon tools to search, summarise,"
+                            " and help the shopper make informed decisions."
+                            f"\n\nCustomer request: {query}"
+                        ),
+                    }
+                ],
             )
 
-            tool_use = next((content for content in response.content if content.type == 'tool_use'), None)
-
-            # If the model wants to use a tool
+            tool_use = next((block for block in response.content if block.type == "tool_use"), None)
             if tool_use:
-                tool_name = tool_use.name
-                tool_input = tool_use.input
-                self._ctx.logger.info(f"Claude selected Airbnb tool: {tool_name} with input: {tool_input}")
+                self._ctx.logger.info("Claude selected tool '%s' with input %s", tool_use.name, tool_use.input)
+                tool_result = await self._session.call_tool(tool_use.name, tool_use.input)
+                return self.format_response(tool_result.content)
 
-                # Call the selected tool on the Airbnb MCP server
-                mcp_response = await self._session.call_tool(tool_name, tool_input)
-                
-                # Debug: Log the raw MCP response
-                self._ctx.logger.info(f"MCP Response type: {type(mcp_response)}")
-                self._ctx.logger.info(f"MCP Response content type: {type(mcp_response.content)}")
-                
-                # Format the response for the user
-                return self.format_response(mcp_response.content)
-            
-            # If the model just wants to chat
-            text_response = next((content for content in response.content if content.type == 'text'), None)
-            if text_response:
-                return text_response.text
+            direct_reply = next((block for block in response.content if block.type == "text"), None)
+            if direct_reply:
+                return direct_reply.text
 
-            return "I can help you search for Airbnb properties, get listing details, and assist with accommodation planning. What would you like to know?"
+            return "I can search Amazon for products, compare offers, or look up order information."
 
-        except Exception as e:
-            self._ctx.logger.error(f"Error processing Airbnb query: {e}")
-            return f"Sorry, an error occurred while processing your Airbnb request: {e}"
+        except Exception as exc:  # pragma: no cover - external API call
+            self._ctx.logger.error("Error while processing Amazon query: %s", exc)
+            return f"Sorry, something went wrong handling your Amazon request: {exc}"
 
     def format_response(self, content: Any) -> str:
-        """Format the response from Airbnb MCP server for the user"""
+        """Normalise the MCP content payload into a readable string."""
+
+        data = self._extract_payload(content)
+
+        if isinstance(data, dict):
+            if "products" in data and isinstance(data["products"], list):
+                return self._format_products(data)
+            if "orders" in data and isinstance(data["orders"], list):
+                return self._format_orders(data["orders"])
+            if "status_code" in data:
+                return self._format_status_payload(data)
+
+        if isinstance(data, list) and all(isinstance(item, dict) for item in data):
+            # Some endpoints might return a bare list of products/orders
+            if data and "title" in data[0]:
+                return self._format_products({"products": data})
+            return "🛒 Amazon Data:\n" + json.dumps(data, indent=2)
+
+        if isinstance(data, str):
+            return f"🛒 Amazon Response:\n{data}"
+
+        return "🛒 Amazon Data:\n" + json.dumps(data, indent=2)
+
+    def _extract_payload(self, content: Any) -> Any:
+        """Pull the first useful item out of the MCP content array."""
+        if isinstance(content, list):
+            if not content:
+                return {}
+            first = content[0]
+            if hasattr(first, "text"):
+                return self._parse_json_if_possible(first.text)
+            if isinstance(first, dict):
+                return first
+            return content
+        if isinstance(content, dict):
+            return content
+        if hasattr(content, "text"):
+            return self._parse_json_if_possible(content.text)  # type: ignore[attr-defined]
+        if isinstance(content, str):
+            return self._parse_json_if_possible(content)
+        return content
+
+    def _parse_json_if_possible(self, raw: str) -> Any:
         try:
-            # Handle different response formats
-            if isinstance(content, list):
-                if len(content) > 0 and hasattr(content[0], 'text'):
-                    # TextContent format
-                    raw_data = content[0].text
-                elif len(content) > 0 and isinstance(content[0], dict):
-                    # Dictionary format
-                    raw_data = content[0]
-                else:
-                    raw_data = content
-            elif isinstance(content, dict):
-                raw_data = content
-            else:
-                raw_data = str(content)
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
 
-            # Parse JSON if it's a string
-            if isinstance(raw_data, str):
-                try:
-                    data = json.loads(raw_data)
-                except json.JSONDecodeError:
-                    return f"🏠 Airbnb Response:\n{raw_data}"
-            else:
-                data = raw_data
+    def _format_products(self, payload: Dict[str, Any]) -> str:
+        products = payload.get("products", [])
+        if not products:
+            return "🛒 No products found for that request."
 
-            # Format based on structure
-            if isinstance(data, dict) and "searchResults" in data:
-                return self._format_search_results(data)
-            elif isinstance(data, dict):
-                return self._format_airbnb_response(data)
-            else:
-                return f"🏠 Airbnb Response:\n{json.dumps(data, indent=2)}"
+        query = payload.get("query") or payload.get("searchQuery")
+        header = f"🛒 Amazon Products ({len(products)} found)"
+        if query:
+            header += f" for '{query}'"
 
-        except Exception as e:
-            self._ctx.logger.error(f"Error formatting response: {e}")
-            return f"🏠 Airbnb Response:\n{str(content)}"
+        lines = [header, ""]
+        for idx, product in enumerate(products[:5], start=1):
+            title = product.get("title") or product.get("name") or "Untitled product"
+            price = self._format_price(product.get("price"))
+            rating = product.get("rating") or product.get("stars") or "No rating"
+            url = product.get("url") or product.get("link") or ""
+            asin = product.get("asin") or product.get("id") or ""
+            badges = product.get("badges") or []
 
-    def _format_search_results(self, data: Dict) -> str:
-        """Format search results based on actual Airbnb JSON structure"""
-        search_results = data.get("searchResults", [])
-        search_url = data.get("searchUrl", "")
-        
-        if not search_results:
-            return "🏠 No Airbnb listings found for your search criteria."
-        
-        # Header with search URL
-        formatted_response = f"🏠 **Found {len(search_results)} Airbnb Properties**\n\n"
-        if search_url:
-            formatted_response += f"🔗 [View all results on Airbnb]({search_url})\n\n"
-        
-        # Format top 5 results
-        for i, result in enumerate(search_results[:5], 1):
-            # Extract data from the complex structure
-            name = ""
-            price = ""
-            rating = ""
-            bed_info = ""
-            badges = ""
-            
-            try:
-                # Extract name
-                if "demandStayListing" in result and "description" in result["demandStayListing"]:
-                    name_obj = result["demandStayListing"]["description"].get("name", {})
-                    if "localizedStringWithTranslationPreference" in name_obj:
-                        name = name_obj["localizedStringWithTranslationPreference"]
-                
-                # Extract price
-                if "structuredDisplayPrice" in result and "primaryLine" in result["structuredDisplayPrice"]:
-                    price = result["structuredDisplayPrice"]["primaryLine"].get("accessibilityLabel", "")
-                
-                # Extract rating
-                if "avgRatingA11yLabel" in result:
-                    rating = result["avgRatingA11yLabel"]
-                
-                # Extract bed info
-                if "structuredContent" in result and "primaryLine" in result["structuredContent"]:
-                    bed_info = result["structuredContent"]["primaryLine"]
-                
-                # Extract badges
-                badges = result.get("badges", "")
-                
-                # Get URL
-                url = result.get("url", "")
-                
-            except (KeyError, TypeError) as e:
-                self._ctx.logger.warning(f"Error extracting data from result {i}: {e}")
-            
-            # Format the listing
-            formatted_response += f"**{i}. {name or 'Property Name Not Available'}**\n"
+            lines.append(f"**{idx}. {title}**")
+            lines.append(f"💰 {price}")
+            lines.append(f"⭐ {rating}")
+            if asin:
+                lines.append(f"🆔 ASIN: {asin}")
+            if badges:
+                if isinstance(badges, list):
+                    lines.append(f"🏷️ {' | '.join(str(b) for b in badges[:4])}")
+                elif isinstance(badges, str):
+                    lines.append(f"🏷️ {badges}")
             if url:
-                formatted_response += f"🔗 [View Details]({url})\n"
-            if bed_info:
-                formatted_response += f"🛏️ {bed_info}\n"
-            if price:
-                formatted_response += f"💰 {price}\n"
-            if rating:
-                formatted_response += f"⭐ {rating}\n"
-            if badges and badges.strip():
-                formatted_response += f"🏆 {badges}\n"
-            formatted_response += "\n"
-        
-        if len(search_results) > 5:
-            formatted_response += f"... and {len(search_results) - 5} more properties available.\n"
-        
-        return formatted_response
+                lines.append(f"🔗 {url}")
+            lines.append("")
 
-    def _format_airbnb_response(self, data: Dict) -> str:
-        """Format Airbnb API response for better readability"""
-        if "listings" in data:
-            return self._format_airbnb_listings(data["listings"])
-        elif "listing" in data:
-            return self._format_single_listing(data["listing"])
-        elif "id" in data and "name" in data:
-            return self._format_single_listing(data)
-        else:
-            return f"🏠 **Airbnb Information**\n\n```json\n{json.dumps(data, indent=2)}\n```"
+        if len(products) > 5:
+            lines.append(f"...and {len(products) - 5} more products available.")
 
-    def _format_airbnb_listings(self, listings: list) -> str:
-        """Format multiple Airbnb listings"""
-        if not listings:
-            return "🏠 No Airbnb listings found for your search criteria."
-        
-        formatted_response = f"🏠 **Found {len(listings)} Airbnb Properties**\n\n"
-        
-        for i, listing in enumerate(listings[:5], 1):  # Limit to top 5
-            name = listing.get("name", "Property Name Not Available")
-            price = listing.get("price", {}).get("total", "Price not available")
-            location = listing.get("location", "Location not specified")
-            rating = listing.get("rating", "No rating")
-            listing_id = listing.get("id", "N/A")
-            
-            formatted_response += f"**{i}. {name}**\n"
-            formatted_response += f"📍 Location: {location}\n"
-            formatted_response += f"💰 Price: {price}\n"
-            formatted_response += f"⭐ Rating: {rating}\n"
-            formatted_response += f"🆔 ID: {listing_id}\n\n"
-        
-        if len(listings) > 5:
-            formatted_response += f"... and {len(listings) - 5} more properties available.\n"
-        
-        return formatted_response
+        return "\n".join(lines)
 
-    def _format_single_listing(self, listing: Dict) -> str:
-        """Format a single Airbnb listing with detailed information"""
-        name = listing.get("name", "Property Name Not Available")
-        description = listing.get("description", "No description available")
-        price = listing.get("price", {}).get("total", "Price not available")
-        location = listing.get("location", "Location not specified")
-        rating = listing.get("rating", "No rating")
-        amenities = listing.get("amenities", [])
-        host = listing.get("host", {}).get("name", "Host information not available")
-        
-        formatted_response = f"🏠 **{name}**\n\n"
-        formatted_response += f"📍 **Location:** {location}\n"
-        formatted_response += f"💰 **Price:** {price}\n"
-        formatted_response += f"⭐ **Rating:** {rating}\n"
-        formatted_response += f"👤 **Host:** {host}\n\n"
-        
-        if description:
-            formatted_response += f"📝 **Description:**\n{description[:300]}{'...' if len(description) > 300 else ''}\n\n"
-        
-        if amenities:
-            formatted_response += f"🏠 **Amenities:** {', '.join(amenities[:10])}\n"
-            if len(amenities) > 10:
-                formatted_response += f"... and {len(amenities) - 10} more amenities\n"
-        
-        return formatted_response
+    def _format_orders(self, orders: List[Dict[str, Any]]) -> str:
+        if not orders:
+            return "📦 No orders found for this account."
 
-    async def cleanup(self):
-        """Clean up the MCP connection"""
-        try:
-            if self._exit_stack:
-                await self._exit_stack.aclose()
-                self._ctx.logger.info("Airbnb MCP connection cleaned up")
-        except Exception as e:
-            self._ctx.logger.error(f"Error during Airbnb MCP cleanup: {e}")
+        lines = [f"📦 Amazon Orders ({len(orders)})", ""]
+        for order in orders[:5]:
+            order_id = order.get("external_id") or order.get("id") or order.get("orderId", "Unknown order")
+            status = order.get("status") or order.get("order_status") or "Status unavailable"
+            total = self._format_price(order.get("total"))
+            updated = order.get("updated_at") or order.get("updatedAt")
+            lines.append(f"🔖 Order: {order_id}")
+            lines.append(f"📊 Status: {status}")
+            if total:
+                lines.append(f"💵 Total: {total}")
+            if updated:
+                lines.append(f"🕒 Updated: {updated}")
+            lines.append("")
 
-# --- uAgent Setup ---
+        if len(orders) > 5:
+            lines.append(f"...and {len(orders) - 5} more orders.")
+
+        return "\n".join(lines)
+
+    def _format_status_payload(self, payload: Dict[str, Any]) -> str:
+        status_code = payload.get("status_code")
+        body = payload.get("body") or payload.get("data") or payload.get("response")
+        lines = [f"🔔 Amazon returned status code {status_code}"]
+        if body:
+            if isinstance(body, (dict, list)):
+                lines.append("```json")
+                lines.append(json.dumps(body, indent=2))
+                lines.append("```")
+            else:
+                lines.append(str(body))
+        return "\n".join(lines)
+
+    def _format_price(self, price_obj: Optional[Any]) -> str:
+        if isinstance(price_obj, dict):
+            amount = price_obj.get("value") or price_obj.get("amount") or price_obj.get("total")
+            currency = price_obj.get("currency") or price_obj.get("currencyCode") or ""
+            if amount:
+                return f"{amount} {currency}".strip()
+        if isinstance(price_obj, (int, float)):
+            return f"{price_obj}"
+        if isinstance(price_obj, str):
+            return price_obj
+        return "Price unavailable"
+
+    async def cleanup(self) -> None:
+        if self._exit_stack:
+            await self._exit_stack.aclose()
+        self._session = None
+        self.tools = []
+
+
+# ---------------------------------------------------------------------------
+# uAgents wiring
+# ---------------------------------------------------------------------------
 
 chat_proto = Protocol(spec=chat_protocol_spec)
 agent = Agent(name=AGENT_NAME, port=AGENT_PORT, mailbox=True)
 
-# Store MCP clients per session
-airbnb_clients: Dict[str, AirbnbMCPClient] = {}
+amazon_clients: Dict[str, AmazonMCPClient] = {}
+
 
 def is_session_valid(session_id: str) -> bool:
-    """Check if session is valid and hasn't expired"""
     if session_id not in user_sessions:
         return False
-    
     session = user_sessions[session_id]
-    current_time = time.time()
-    
-    if current_time - session["last_activity"] > SESSION_TIMEOUT:
-        # Session expired
+    now = time.time()
+    if now - session["last_activity"] > SESSION_TIMEOUT:
         del user_sessions[session_id]
         return False
-    
-    # Update last activity
-    session["last_activity"] = current_time
+    session["last_activity"] = now
     return True
 
-async def get_airbnb_client(ctx: Context, session_id: str) -> AirbnbMCPClient:
-    """Get or create Airbnb MCP client for session"""
-    if session_id not in airbnb_clients:
-        client = AirbnbMCPClient(ctx)
+
+async def get_amazon_client(ctx: Context, session_id: str) -> AmazonMCPClient:
+    if session_id not in amazon_clients:
+        client = AmazonMCPClient(ctx)
         await client.connect()
-        airbnb_clients[session_id] = client
-    return airbnb_clients[session_id]
+        amazon_clients[session_id] = client
+    return amazon_clients[session_id]
+
 
 @chat_proto.on_message(model=ChatMessage)
-async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage):
-    """Handle incoming chat messages"""
-    
-    # Extract text from content (handle both list and direct text formats)
+async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage) -> None:
     try:
-        if isinstance(msg.content, list):
-            # Content is a list, extract text from first item
-            if len(msg.content) > 0:
-                if hasattr(msg.content[0], 'text'):
-                    user_text = msg.content[0].text
-                else:
-                    user_text = str(msg.content[0])
-            else:
-                user_text = "[Empty message]"
-        elif hasattr(msg.content, 'text'):
-            # Content has direct text attribute
+        if isinstance(msg.content, list) and msg.content and hasattr(msg.content[0], "text"):
+            user_text = msg.content[0].text
+        elif hasattr(msg.content, "text"):
             user_text = msg.content.text
         else:
-            # Fallback to string representation
             user_text = str(msg.content)
-    except Exception as e:
-        ctx.logger.error(f"Error extracting message text: {e}")
-        user_text = "[Could not parse message]"
-    
-    ctx.logger.info(f"Received message from {sender}: '{user_text}'")
-    
-    # Extract or create session ID
-    session_id = getattr(msg, 'session_id', None) or str(uuid4())
-    
-    # Validate session
+    except Exception as exc:  # pragma: no cover - defensive parsing
+        ctx.logger.error("Failed to extract message text: %s", exc)
+        user_text = "[Unable to parse message]"
+
+    session_id = getattr(msg, "session_id", None) or str(uuid4())
     if not is_session_valid(session_id):
-        user_sessions[session_id] = {
-            "authenticated": True,
-            "last_activity": time.time()
-        }
-    
+        user_sessions[session_id] = {"last_activity": time.time()}
+
+    ctx.logger.info("Received message from %s (session %s): %s", sender, session_id, user_text)
+
     try:
-        # Get Airbnb MCP client for this session
-        airbnb_client = await get_airbnb_client(ctx, session_id)
-        
-        # Process the query
-        response_text = await airbnb_client.process_query(user_text)
-        
-        # Send response
-        response_msg = ChatMessage(
-            timestamp=datetime.now(timezone.utc),
-            msg_id=str(uuid4()),
-            content=[TextContent(type="text", text=response_text)]
-        )
-        
-        await ctx.send(sender, response_msg)
-        ctx.logger.info(f"Sent response to {sender}")
-        
-    except Exception as e:
-        ctx.logger.error(f"Error handling message: {e}")
-        error_msg = ChatMessage(
-            timestamp=datetime.now(timezone.utc),
-            msg_id=str(uuid4()),
-            content=[TextContent(type="text", text=f"Sorry, I encountered an error: {str(e)}")]
-        )
-        await ctx.send(sender, error_msg)
+        client = await get_amazon_client(ctx, session_id)
+        reply_text = await client.process_query(user_text)
+    except Exception as exc:  # pragma: no cover - runtime safety
+        ctx.logger.error("Error handling chat message: %s", exc)
+        reply_text = f"Sorry, I ran into an error while handling that: {exc}"
+
+    response = ChatMessage(
+        timestamp=datetime.now(timezone.utc),
+        msg_id=str(uuid4()),
+        content=[TextContent(type="text", text=reply_text)],
+    )
+
+    await ctx.send(sender, response)
+    ctx.logger.info("Sent response to %s", sender)
+
 
 @chat_proto.on_message(model=ChatAcknowledgement)
-async def handle_chat_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
-    ctx.logger.info(f"Received acknowledgement from {sender}")
+async def handle_chat_ack(ctx: Context, sender: str, msg: ChatAcknowledgement) -> None:
+    ctx.logger.info("Received acknowledgement from %s", sender)
+
 
 @agent.on_event("shutdown")
-async def on_shutdown(ctx: Context):
-    """Clean up resources on shutdown"""
-    ctx.logger.info("Shutting down Airbnb agent...")
-    for client in airbnb_clients.values():
+async def on_shutdown(ctx: Context) -> None:
+    ctx.logger.info("Cleaning up Amazon MCP clients")
+    for client in list(amazon_clients.values()):
         await client.cleanup()
+    amazon_clients.clear()
+
 
 agent.include(chat_proto)
 
+
 if __name__ == "__main__":
-    print(f"Airbnb Agent starting on http://localhost:{AGENT_PORT}")
     print(f"Agent address: {agent.address}")
-    print("🏠 Ready to help you find the perfect Airbnb!")
+    print("🛒 Amazon MCP Agent ready for product queries.")
     agent.run()
