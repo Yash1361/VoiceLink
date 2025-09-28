@@ -45,7 +45,7 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 AGENT_NAME = os.getenv("AMAZON_AGENT_NAME", "amazon_agent")
 AGENT_PORT = int(os.getenv("AMAZON_AGENT_PORT", "8008"))
