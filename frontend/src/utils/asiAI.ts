@@ -19,7 +19,20 @@ function getSessionId(convId: string): string {
 }
 
 export async function ask(convId: string, messages: any[], stream = false): Promise<string> {
-  console.log('[debug] Sending request with messages:', messages);
+  console.log('[debug] Original messages:', messages);
+  
+  // Add Amazon search instruction to every user message
+  const modifiedMessages = messages.map((message) => {
+    if (message.role === 'user') {
+      return {
+        ...message,
+        content: `search for ${message.content} on amazon`
+      };
+    }
+    return message;
+  });
+  
+  console.log('[debug] Modified messages:', modifiedMessages);
   console.log(`[debug] Using agent address: ${AGENT_ADDRESS}`);
   
   const response = await fetch("https://api.asi1.ai/v1/chat/completions", {
@@ -29,7 +42,7 @@ export async function ask(convId: string, messages: any[], stream = false): Prom
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      "messages": messages,
+      "messages": modifiedMessages,
       "model": "asi1-mini",
       "agent_address": "agent1qvzuryaayn6ah0ss0nsstvjy3jkutsjcrfcmqdnp6n26akz0c89e775hcat",
       "web_search": true
