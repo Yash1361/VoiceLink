@@ -10,12 +10,14 @@ import { useBlendshapeGestures } from "./hooks/useGesture";
 export default function FaceLandmarkerApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const faceLandmarkerRef = useRef<any>(null);
   const faceLandmarkerConstantsRef = useRef<any>(null);
   const drawingUtilsRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
   const shouldTranscribeRef = useRef(false);
+  const videoAspectRatioRef = useRef<number | null>(null);
 
   const [isReady, setIsReady] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -34,14 +36,11 @@ export default function FaceLandmarkerApp() {
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<number | null>(null);
 
   const words = useMemo(() => ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"], []);
   const columns = 3;
   const prevActiveGesturesRef = useRef<string[]>([]);
-
-
-  const videoWidth = 720; // Display width; canvas will scale to the stream size
-
   const gestures = [
   {
     name: "Select",
@@ -341,13 +340,29 @@ export default function FaceLandmarkerApp() {
     if (!v || !c || !faceLandmarker) return;
 
     // Fit canvas to the incoming stream size
-    const ratio = v.videoHeight / v.videoWidth || 0.5625; // fallback 16:9
-    v.style.width = `${videoWidth}px`;
-    v.style.height = `${videoWidth * ratio}px`;
-    c.style.width = `${videoWidth}px`;
-    c.style.height = `${videoWidth * ratio}px`;
-    c.width = v.videoWidth;
-    c.height = v.videoHeight;
+    const inputWidth = v.videoWidth;
+    const inputHeight = v.videoHeight;
+
+    if (!inputWidth || !inputHeight) {
+      rafRef.current = requestAnimationFrame(loop);
+      return;
+    }
+
+    const streamRatio = inputWidth / inputHeight;
+
+    if (!videoAspectRatioRef.current || Math.abs(videoAspectRatioRef.current - streamRatio) > 0.001) {
+      videoAspectRatioRef.current = streamRatio;
+      setVideoAspectRatio(streamRatio);
+    }
+
+    const container = videoContainerRef.current;
+    const displayWidth = container?.clientWidth || v.clientWidth || inputWidth;
+    const displayHeight = container?.clientHeight || v.clientHeight || displayWidth / streamRatio;
+
+    c.style.width = `${displayWidth}px`;
+    c.style.height = `${displayHeight}px`;
+    c.width = inputWidth;
+    c.height = inputHeight;
 
     const start = performance.now();
     const results = faceLandmarker.detectForVideo(v, start);
@@ -451,17 +466,21 @@ export default function FaceLandmarkerApp() {
         {/* Video + Canvas */}
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] items-start">
           <div className="space-y-4">
-            <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-black">
+            <div
+              ref={videoContainerRef}
+              className="relative aspect-video rounded-2xl overflow-hidden border border-slate-200 bg-black"
+              style={{ aspectRatio: videoAspectRatio ?? undefined }}
+            >
               <video
                 ref={videoRef}
-                className="block w-full h-auto object-contain [transform:rotateY(180deg)]"
+                className="absolute inset-0 h-full w-full object-contain [transform:rotateY(180deg)]"
                 playsInline
                 muted
                 autoPlay
               />
               <canvas
                 ref={canvasRef}
-                className="absolute inset-0 [transform:rotateY(180deg)] pointer-events-none"
+                className="absolute inset-0 h-full w-full [transform:rotateY(180deg)] pointer-events-none"
               />
               {!isRunning && (
                 <div className="absolute inset-0 bg-gradient-to-b from-black/20 to-black/40 text-white flex items-center justify-center text-center p-6">
