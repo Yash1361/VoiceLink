@@ -853,7 +853,7 @@ export default function FaceLandmarkerApp() {
       case "subject":
         return [...quickOptions, "subjectInput", "next"];
       case "body":
-        return [...quickOptions, "bodyInput", "send"];
+        return [...quickOptions, "send"];
       case "result":
         return ["result"];
       default:
@@ -1102,7 +1102,7 @@ export default function FaceLandmarkerApp() {
 
           const currentFocus = agentMailFocusTargets[current];
           const isInQuickOptions = currentFocus?.startsWith("quickOption_");
-          const isInInput = currentFocus === "recipientInput" || currentFocus === "subjectInput" || currentFocus === "bodyInput";
+          const isInInput = currentFocus === "recipientInput" || currentFocus === "subjectInput";
           const isInAction = currentFocus === "next" || currentFocus === "send" || currentFocus === "result";
 
           let next: number;
@@ -1111,8 +1111,13 @@ export default function FaceLandmarkerApp() {
             // Grid-like navigation: quick options are like first row, input is second row, action is third row
             if (isInQuickOptions) {
               if (direction === "Down") {
-                // Move to input field
-                next = quickOptionsCount;
+                // For body step, go directly to send button since there's no input field
+                if (agentMailStep === "body") {
+                  next = quickOptionsCount; // This is the send button for body step
+                } else {
+                  // Move to input field for recipient and subject steps
+                  next = quickOptionsCount;
+                }
               } else {
                 // Stay in quick options, wrap around
                 const step = direction === "Up" ? -1 : 1;
@@ -1128,8 +1133,13 @@ export default function FaceLandmarkerApp() {
               }
             } else if (isInAction) {
               if (direction === "Up") {
-                // Move to input field
-                next = quickOptionsCount;
+                // For body step, go back to quick options since there's no input field
+                if (agentMailStep === "body") {
+                  next = 0; // Go to first quick option
+                } else {
+                  // Move to input field for recipient and subject steps
+                  next = quickOptionsCount;
+                }
               } else {
                 // Stay on action button
                 next = current;
@@ -1158,8 +1168,6 @@ export default function FaceLandmarkerApp() {
             setAgentKeyboardValue(agentMailDraft.to);
           } else if (focus === "subjectInput") {
             setAgentKeyboardValue(agentMailDraft.subject);
-          } else if (focus === "bodyInput") {
-            setAgentKeyboardValue(agentMailDraft.body);
           } else {
             setAgentKeyboardValue("");
           }
@@ -1481,8 +1489,7 @@ export default function FaceLandmarkerApp() {
         const focus = activeAgentMailFocus;
         if (
           (field === "to" && focus === "recipientInput") ||
-          (field === "subject" && focus === "subjectInput") ||
-          (field === "body" && focus === "bodyInput")
+          (field === "subject" && focus === "subjectInput")
         ) {
           setAgentKeyboardValue(value);
         }
@@ -1504,13 +1511,11 @@ export default function FaceLandmarkerApp() {
         setAgentKeyboardValue(agentMailDraft.to);
       } else if (target === "subjectInput") {
         setAgentKeyboardValue(agentMailDraft.subject);
-      } else if (target === "bodyInput") {
-        setAgentKeyboardValue(agentMailDraft.body);
       } else {
         setAgentKeyboardValue("");
       }
     },
-    [agentMailDraft.body, agentMailDraft.subject, agentMailDraft.to, agentMailFocusTargets]
+    [agentMailDraft.subject, agentMailDraft.to, agentMailFocusTargets]
   );
 
   const focusDuckSection = useCallback(
@@ -1537,15 +1542,26 @@ export default function FaceLandmarkerApp() {
         const focus = activeAgentMailFocus;
         const isRecipient = focus === "recipientInput";
         const isSubject = focus === "subjectInput";
-        const isBody = focus === "bodyInput";
 
-        if (!isRecipient && !isSubject && !isBody) {
+        if (!isRecipient && !isSubject) {
           if (key === "Enter") {
             if (focus === "send") {
               handleAgentMailSend();
             } else {
               goToNextAgentMailStep();
             }
+          } else if (agentMailStep === "body") {
+            // Handle body input through keyboard when not focused on input fields
+            const currentValue = agentMailDraft.body;
+            let nextValue = currentValue;
+            if (key === "Backspace") {
+              nextValue = currentValue.slice(0, -1);
+            } else if (key === "Space") {
+              nextValue = `${currentValue} `;
+            } else if (key.length === 1) {
+              nextValue = `${currentValue}${key.toLowerCase()}`;
+            }
+            applyAgentMailValue("body", nextValue);
           }
           return;
         }
@@ -1632,8 +1648,6 @@ export default function FaceLandmarkerApp() {
         setAgentKeyboardValue(agentMailDraft.to);
       } else if (activeAgentMailFocus === "subjectInput") {
         setAgentKeyboardValue(agentMailDraft.subject);
-      } else if (activeAgentMailFocus === "bodyInput") {
-        setAgentKeyboardValue(agentMailDraft.body);
       } else {
         setAgentKeyboardValue("");
       }
@@ -2362,8 +2376,7 @@ export default function FaceLandmarkerApp() {
 
     const fieldIsActive =
       (agentMailStep === "recipient" && activeAgentMailFocus === "recipientInput") ||
-      (agentMailStep === "subject" && activeAgentMailFocus === "subjectInput") ||
-      (agentMailStep === "body" && activeAgentMailFocus === "bodyInput");
+      (agentMailStep === "subject" && activeAgentMailFocus === "subjectInput");
 
     const fieldBaseClasses = "w-full rounded-xl border px-4 py-3 text-sm text-slate-800 shadow-inner focus:outline-none focus:ring-2";
     const focusedClasses = fieldIsActive
@@ -2403,13 +2416,18 @@ export default function FaceLandmarkerApp() {
           </div>
 
           {agentMailStep === "body" ? (
-            <textarea
-              className={`${fieldBaseClasses} ${focusedClasses} h-36 resize-y leading-relaxed`}
-              placeholder={stepCopy.placeholder}
-              value={agentMailDraft.body}
-              onChange={(event) => handleAgentMailDraftChange("body", event.target.value)}
-              onFocus={() => focusAgentMailTarget("bodyInput")}
-            />
+            // Body step - no textarea to save space, users can only use quick options
+            <div className="space-y-2">
+              <div className="text-sm text-slate-500 italic">
+                Select a quick message option below or use the keyboard for custom text
+              </div>
+              {agentMailDraft.body && (
+                <div className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                  <div className="font-medium text-slate-600 mb-1">Current message:</div>
+                  <div className="whitespace-pre-wrap">{agentMailDraft.body}</div>
+                </div>
+              )}
+            </div>
           ) : agentMailStep === "subject" ? (
             <input
               className={`${fieldBaseClasses} ${focusedClasses}`}
@@ -3140,8 +3158,8 @@ export default function FaceLandmarkerApp() {
         }
       }
 
-      // Skip word navigator gestures if transcription is disabled
-      if (!isTranscriptionDisabled) {
+      // Skip word navigator gestures if transcription is disabled or agent popup is open
+      if (!isTranscriptionDisabled && !isAgentPopupOpen) {
         if (gesture === "Select") {
           handleSelectGesture();
           return;
@@ -3212,8 +3230,8 @@ export default function FaceLandmarkerApp() {
       }
     }
 
-    // Skip word navigator gestures if transcription is disabled
-    if (!isTranscriptionDisabled) {
+    // Skip word navigator gestures if transcription is disabled or agent popup is open
+    if (!isTranscriptionDisabled && !isAgentPopupOpen) {
       if (gestureName === "Select") {
         handleSelectGesture();
         return;
