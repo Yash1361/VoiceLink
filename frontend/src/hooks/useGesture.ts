@@ -46,11 +46,14 @@ export function useBlendshapeGestures(
       }
     }
 
-    if (newlyActive.length > 0) {
-      setActiveGestures(newlyActive);
-    } else {
-      setActiveGestures([]);
-    }
+    setActiveGestures((prev) => {
+      const sameLength = prev.length === newlyActive.length;
+      const sameOrder = sameLength && prev.every((name, index) => name === newlyActive[index]);
+      if (sameOrder) {
+        return prev;
+      }
+      return newlyActive;
+    });
   }, [blendShapes, gestures]);
 
   return activeGestures;

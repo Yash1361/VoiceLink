@@ -1,11 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Camera, CameraOff, Sparkles, Cpu, Activity, Play, Pause, X } from "lucide-react";
+import { Camera, CameraOff, Sparkles, Activity, Play, Pause, X } from "lucide-react";
 import { useBlendshapeGestures } from "./hooks/useGesture";
 
 
 // MediaPipe Tasks (loaded at runtime from CDN)
 // We dynamically import to avoid SSR issues and to keep this as a single-file app.
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/, "");
+const SUGGEST_ENDPOINT = `${API_BASE_URL}/suggest`;
+
+type SuggestionNode = {
+  word: string;
+  next?: SuggestionNode[];
+};
 
 export default function FaceLandmarkerApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -37,11 +45,22 @@ export default function FaceLandmarkerApp() {
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
   const [videoAspectRatio, setVideoAspectRatio] = useState<number | null>(null);
+  const [navigatorOptions, setNavigatorOptions] = useState<string[]>(["Start Typing"]);
+  const [responseWords, setResponseWords] = useState<string[]>([]);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const [currentSuggestions, setCurrentSuggestions] = useState<SuggestionNode[]>([]);
 
-  const words = useMemo(() => ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"], []);
-  const columns = 3;
+  const columns = Math.min(3, Math.max(1, navigatorOptions.length));
   const prevActiveGesturesRef = useRef<string[]>([]);
-  const gestures = [
+
+  const resetNavigator = useCallback(() => {
+    setNavigatorOptions(["Start Typing"]);
+    setResponseWords([]);
+    setCurrentSuggestions([]);
+    setIsLoadingSuggestions(false);
+    setCurrentWordIndex(0);
+  }, []);
+  const gestures = useMemo(() => [
   {
     name: "Select",
     metrics: [
@@ -110,44 +129,14 @@ export default function FaceLandmarkerApp() {
     framesRequired: 1,
     onActivate: () => console.log("😉 Right Wink detected!"),
   },
-];
+], []);
 
   const activeGestures = useBlendshapeGestures(blendShapes, gestures);
-  const totalWords = words.length;
+  const totalWords = navigatorOptions.length;
 
   useEffect(() => {
-    const prev = prevActiveGesturesRef.current;
-    const newlyActivated = activeGestures.filter((gesture) => !prev.includes(gesture));
-
-    if (newlyActivated.length > 0) {
-      newlyActivated.forEach((gesture) => {
-        setCurrentWordIndex((current) => {
-          switch (gesture) {
-            case "Right": {
-              const isEndOfRow = current % columns === columns - 1 || current + 1 >= totalWords;
-              return isEndOfRow ? current : current + 1;
-            }
-            case "Left": {
-              const isStartOfRow = current % columns === 0;
-              return isStartOfRow ? current : current - 1;
-            }
-            case "Down": {
-              const next = current + columns;
-              return next < totalWords ? next : current;
-            }
-            case "Up": {
-              const next = current - columns;
-              return next >= 0 ? next : current;
-            }
-            default:
-              return current;
-          }
-        });
-      });
-    }
-
-    prevActiveGesturesRef.current = activeGestures;
-  }, [activeGestures, columns, totalWords]);
+    setCurrentWordIndex(0);
+  }, [navigatorOptions]);
 
   const isSelectActive = activeGestures.includes("Select");
 
@@ -265,6 +254,147 @@ export default function FaceLandmarkerApp() {
     setIsTranscribing(false);
     setInterimTranscript("");
   }, []);
+
+  const handleSelectGesture = useCallback(async () => {
+    if (navigatorOptions.length === 0) return;
+
+    const safeIndex = Math.min(currentWordIndex, Math.max(0, navigatorOptions.length - 1));
+    const currentOptionRaw = navigatorOptions[safeIndex] ?? "";
+    const currentOption = currentOptionRaw.trim();
+    const normalizedOption = currentOption.toLowerCase();
+
+    if (!currentOption || normalizedOption === "loading responses...") {
+      return;
+    }
+
+    if (isLoadingSuggestions) {
+      return;
+    }
+
+    if (normalizedOption === "start typing") {
+      const questionText = [transcript, interimTranscript].filter(Boolean).join(" ").trim();
+
+      setIsLoadingSuggestions(true);
+      setNavigatorOptions(["Loading Responses..."]);
+      setCurrentSuggestions([]);
+      setResponseWords([]);
+      setCurrentWordIndex(0);
+
+      stopTranscription();
+
+      try {
+        const response = await fetch(SUGGEST_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            question: questionText,
+            partial_answer: "",
+            suggestions_count: 5,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Suggestion request failed: ${response.status}`);
+        }
+
+        const payload = await response.json();
+        const rawSuggestions = Array.isArray(payload?.suggestions) ? payload.suggestions : [];
+
+        const normalizeNode = (node: any): SuggestionNode | null => {
+          if (!node || typeof node.word !== "string") return null;
+          const word = node.word.trim();
+          if (!word) return null;
+          const nextRaw = Array.isArray(node.next) ? node.next : [];
+          const next = nextRaw
+            .map((child: any) => normalizeNode(child))
+            .filter(Boolean) as SuggestionNode[];
+          return { word, next };
+        };
+
+        const normalized = rawSuggestions
+          .map((node: any) => normalizeNode(node))
+          .filter(Boolean) as SuggestionNode[];
+
+        if (normalized.length > 0) {
+          setCurrentSuggestions(normalized);
+          setNavigatorOptions(normalized.map((node) => node.word));
+        } else {
+          setNavigatorOptions(["No suggestions available", "Start Typing"]);
+          setCurrentSuggestions([]);
+        }
+      } catch (err) {
+        console.error("Failed to load suggestions", err);
+        setNavigatorOptions(["Unable to load responses", "Start Typing"]);
+        setCurrentSuggestions([]);
+      } finally {
+        setIsLoadingSuggestions(false);
+      }
+
+      return;
+    }
+
+    if (currentSuggestions.length === 0) {
+      return;
+    }
+
+    const selectedNode = currentSuggestions[safeIndex];
+    if (!selectedNode || !selectedNode.word) {
+      return;
+    }
+
+    setResponseWords((prev) => [...prev, selectedNode.word]);
+
+    const nextSuggestions = selectedNode.next ?? [];
+
+    if (nextSuggestions.length > 0) {
+      setCurrentSuggestions(nextSuggestions);
+      setNavigatorOptions(nextSuggestions.map((node) => node.word));
+    } else {
+      setCurrentSuggestions([]);
+      setNavigatorOptions(["Start Typing"]);
+    }
+  }, [currentSuggestions, currentWordIndex, interimTranscript, isLoadingSuggestions, navigatorOptions, stopTranscription, transcript]);
+
+  useEffect(() => {
+    const prev = prevActiveGesturesRef.current;
+    const newlyActivated = activeGestures.filter((gesture) => !prev.includes(gesture));
+
+    if (newlyActivated.length > 0) {
+      newlyActivated.forEach((gesture) => {
+        if (gesture === "Select") {
+          handleSelectGesture();
+          return;
+        }
+
+        setCurrentWordIndex((current) => {
+          switch (gesture) {
+            case "Right": {
+              const isEndOfRow = columns <= 1 || current % columns === columns - 1 || current + 1 >= totalWords;
+              return isEndOfRow ? current : current + 1;
+            }
+            case "Left": {
+              const isStartOfRow = current % columns === 0;
+              return isStartOfRow ? current : current - 1;
+            }
+            case "Down": {
+              const next = current + columns;
+              return next < totalWords ? next : current;
+            }
+            case "Up": {
+              const next = current - columns;
+              return next >= 0 ? next : current;
+            }
+            default:
+              return current;
+          }
+        });
+      });
+    }
+
+    prevActiveGesturesRef.current = activeGestures;
+  }, [activeGestures, columns, handleSelectGesture, totalWords]);
 
   const loadModel = useCallback(async () => {
     setLoadingMsg("Loading MediaPipe Tasks…");
@@ -388,10 +518,11 @@ export default function FaceLandmarkerApp() {
       await loadModel();
     }
     await startCamera();
+    resetNavigator();
     setIsRunning(true);
     startTranscription();
     rafRef.current = requestAnimationFrame(loop);
-  }, [isReady, loadModel, loop, startCamera, startTranscription]);
+  }, [isReady, loadModel, loop, resetNavigator, startCamera, startTranscription]);
 
   const stop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -399,7 +530,8 @@ export default function FaceLandmarkerApp() {
     stopCamera();
     stopTranscription();
     setIsRunning(false);
-  }, [stopCamera, stopTranscription]);
+    resetNavigator();
+  }, [resetNavigator, stopCamera, stopTranscription]);
 
   useEffect(() => {
     // Cleanup on unmount
@@ -463,12 +595,12 @@ export default function FaceLandmarkerApp() {
           </div>
         </div>
 
-        {/* Video + Canvas */}
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] items-start">
+        {/* Main Layout */}
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] items-start">
           <div className="space-y-4">
             <div
               ref={videoContainerRef}
-              className="relative w-full max-w-[720px] mx-auto aspect-video rounded-2xl overflow-hidden border border-slate-200 bg-black"
+              className="relative w-full max-w-[720px] aspect-video rounded-2xl overflow-hidden border border-slate-200 bg-black"
               style={{ aspectRatio: videoAspectRatio ?? undefined }}
             >
               <video
@@ -511,63 +643,98 @@ export default function FaceLandmarkerApp() {
             </div>
           </div>
 
-          <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4">
-            <h2 className="text-lg font-semibold mb-3">Word Navigator</h2>
-            <p className="text-sm text-slate-600 mb-4">
-              Use facial gestures to move across the grid. The active word is bolded; Select adds a green focus.
-            </p>
-            <div className="grid grid-cols-3 gap-3">
-              {words.map((word, index) => {
-                const isActiveWord = index === currentWordIndex;
-                const wordClasses = [
-                  "rounded-xl border px-4 py-6 text-center text-sm font-medium shadow-sm transition-colors",
-                  isActiveWord
-                    ? isSelectActive
-                      ? "border-emerald-400 bg-emerald-50 text-emerald-700"
-                      : "border-slate-300 bg-slate-100 text-slate-900"
-                    : "border-slate-100 bg-white text-slate-400"
-                ].join(" ");
+          <div className="space-y-6">
+            {isSpeechSupported ? (
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-3 min-h-[160px]">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <span
+                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isTranscribing && isRunning ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
+                  >
+                    {isTranscribing && isRunning ? "Listening" : "Idle"}
+                  </span>
+                  {speechError ? <span className="text-rose-600">{speechError}</span> : null}
+                </div>
+                <div className="w-full min-h-[120px] rounded-xl bg-slate-50 p-3 border border-slate-100 text-sm text-slate-700 whitespace-pre-wrap">
+                  {transcript ? (
+                    <span>{transcript}</span>
+                  ) : (
+                    <span className="text-slate-400">Speak to see the transcript in real time.</span>
+                  )}
+                  {interimTranscript && (
+                    <span className="text-slate-400 block mt-2 italic">{interimTranscript}</span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 p-4 text-sm">
+                Live transcription is not supported in this browser. Safari 16+ on macOS/iOS should support it when microphone access is allowed.
+              </div>
+            )}
 
-                return (
-                  <div key={word} className={wordClasses}>
-                    {word}
-                  </div>
-                );
-              })}
+            <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Word Navigator</h2>
+                  <p className="text-sm text-slate-600">Highlight “Start Typing” to fetch responses, then use Select to build your reply word by word.</p>
+                </div>
+                {isLoadingSuggestions ? (
+                  <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    Loading…
+                  </span>
+                ) : null}
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">My Response</div>
+                <div className="mt-2 min-h-[52px] rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap">
+                  {responseWords.length > 0 ? (
+                    <span>{responseWords.join(" ")}</span>
+                  ) : (
+                    <span className="text-slate-400">No words selected yet.</span>
+                  )}
+                </div>
+              </div>
+
+              {navigatorOptions.length > 0 ? (
+                <div
+                  className="grid gap-3"
+                  style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(columns, navigatorOptions.length))}, minmax(0, 1fr))` }}
+                >
+                  {navigatorOptions.map((option, index) => {
+                    const isActiveWord = index === currentWordIndex;
+                    const normalizedOption = option.trim().toLowerCase();
+                    const isInformational = [
+                      "loading responses...",
+                      "no suggestions available",
+                      "unable to load responses",
+                    ].includes(normalizedOption);
+
+                    let wordClasses = "rounded-xl border px-4 py-5 text-center text-sm font-medium shadow-sm transition-colors";
+
+                    if (isInformational) {
+                      wordClasses += " border-slate-200 bg-slate-50 text-slate-400";
+                    } else if (isActiveWord) {
+                      wordClasses += isSelectActive
+                        ? " border-emerald-400 bg-emerald-50 text-emerald-700"
+                        : " border-slate-300 bg-slate-100 text-slate-900";
+                    } else {
+                      wordClasses += " border-slate-100 bg-white text-slate-500";
+                    }
+
+                    return (
+                      <div key={`${option}-${index}`} className={wordClasses}>
+                        {option}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">
+                  No suggestions available yet.
+                </div>
+              )}
             </div>
           </div>
-        </div>
-
-        {/* Transcription */}
-        <div className="mt-8">
-          <h2 className="text-lg font-semibold mb-3">Live Transcription</h2>
-          {isSpeechSupported ? (
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-3 min-h-[160px]">
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isTranscribing && isRunning ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
-                    }`}
-                >
-                  {isTranscribing && isRunning ? "Listening" : "Idle"}
-                </span>
-                {speechError ? <span className="text-rose-600">{speechError}</span> : null}
-              </div>
-              <div className="w-full min-h-[100px] rounded-xl bg-slate-50 p-3 border border-slate-100 text-sm text-slate-700 whitespace-pre-wrap">
-                {transcript ? (
-                  <span>{transcript}</span>
-                ) : (
-                  <span className="text-slate-400">Speak to see the transcript in real time.</span>
-                )}
-                {interimTranscript && (
-                  <span className="text-slate-400 block mt-2 italic">{interimTranscript}</span>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 p-4 text-sm">
-              Live transcription is not supported in this browser. Safari 16+ on macOS/iOS should support it when microphone access is allowed.
-            </div>
-          )}
         </div>
 
         {/* Footer */}
