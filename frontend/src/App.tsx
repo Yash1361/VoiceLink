@@ -11,6 +11,10 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/
 const SUGGEST_ENDPOINT = `${API_BASE_URL}/suggest`;
 const SENTENCE_GRID_BREAKPOINT = 640;
 const SENTENCE_GRID_MAX_COLUMNS = 3;
+const REPEAT_PROMPT_OPTION = "Ask to repeat again";
+const REPEAT_PROMPT_SPOKEN_TEXT = "Can you please repeat that";
+const REPEAT_PROMPT_ERROR_MESSAGE = "We didn't catch that. Please ask them to repeat.";
+const REPEAT_PROMPT_NORMALIZED = REPEAT_PROMPT_OPTION.toLowerCase();
 
 const getSentenceViewportColumns = () => {
   if (typeof window === "undefined") {
@@ -245,6 +249,23 @@ export default function FaceLandmarkerApp() {
     };
   }, []);
 
+  const requestRepeatPrompt = useCallback((errorMessage?: string) => {
+    if (typeof errorMessage === "string" && errorMessage.trim()) {
+      setSpeechError(errorMessage);
+    }
+    shouldTranscribeRef.current = false;
+    setIsTranscribing(false);
+    setNavigatorOptions([REPEAT_PROMPT_OPTION]);
+    setSentenceSuggestions([]);
+    setCurrentSuggestions([]);
+    setResponseWords([]);
+    setIsLoadingSuggestions(false);
+    setCurrentWordIndex(0);
+    setIsSubmitPressed(false);
+    setTranscript("");
+    setInterimTranscript("");
+  }, []);
+
 
 
   const startCamera = useCallback(async () => {
@@ -307,6 +328,13 @@ export default function FaceLandmarkerApp() {
         shouldTranscribeRef.current = false;
         recognition.stop();
         setIsTranscribing(false);
+      } else if (event.error === "aborted" || event.error === "no-speech") {
+        requestRepeatPrompt(REPEAT_PROMPT_ERROR_MESSAGE);
+        try {
+          recognition.stop();
+        } catch (stopErr) {
+          console.warn("Speech recognition stop after abort failed", stopErr);
+        }
       } else {
         setSpeechError(event.error ?? "Speech recognition error");
       }
@@ -324,7 +352,7 @@ export default function FaceLandmarkerApp() {
 
     recognitionRef.current = recognition;
     return recognition;
-  }, []);
+  }, [requestRepeatPrompt]);
 
   const startTranscription = useCallback(() => {
     const recognition = ensureSpeechRecognition();
@@ -423,12 +451,27 @@ export default function FaceLandmarkerApp() {
       return;
     }
 
+    if (normalizedOption === REPEAT_PROMPT_NORMALIZED) {
+      speakText(REPEAT_PROMPT_SPOKEN_TEXT);
+      setSpeechError(null);
+      stopTranscription();
+      resetNavigator();
+      startTranscription();
+      return;
+    }
+
     if (isLoadingSuggestions) {
       return;
     }
 
     if (normalizedOption === "start typing") {
       const questionText = [transcript, interimTranscript].filter(Boolean).join(" ").trim();
+
+      if (!questionText) {
+        stopTranscription();
+        requestRepeatPrompt(REPEAT_PROMPT_ERROR_MESSAGE);
+        return;
+      }
 
       setIsLoadingSuggestions(true);
       setNavigatorOptions(["Loading Responses..."]);
@@ -544,7 +587,7 @@ export default function FaceLandmarkerApp() {
       setCurrentSuggestions([]);
       setNavigatorOptions(["Start Typing"]);
     }
-  }, [currentSuggestions, currentWordIndex, gridOptions, handleSubmitResponse, interimTranscript, isLoadingSuggestions, navigatorOptions, sentenceSuggestions, stopTranscription, transcript, trimmedResponse]);
+  }, [currentSuggestions, currentWordIndex, gridOptions, handleSubmitResponse, interimTranscript, isLoadingSuggestions, navigatorOptions, requestRepeatPrompt, resetNavigator, sentenceSuggestions, startTranscription, stopTranscription, transcript, trimmedResponse]);
 
   useEffect(() => {
     const prev = prevActiveGesturesRef.current;
