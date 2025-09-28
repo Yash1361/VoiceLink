@@ -8,6 +8,7 @@ natural language conversations.
 
 import json
 import os
+import re
 import time
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
@@ -26,10 +27,10 @@ from uagents_core.contrib.protocols.chat import (
 )
 
 try:
-    from anthropic import Anthropic
+    import google.generativeai as genai
 except ModuleNotFoundError as exc:  # pragma: no cover - import guard
     raise ModuleNotFoundError(
-        "Missing optional dependency 'anthropic'. Install it with 'pip install anthropic'."
+        "Missing optional dependency 'google-generativeai'. Install it with 'pip install google-generativeai'."
     ) from exc
 
 # ---------------------------------------------------------------------------
@@ -38,19 +39,20 @@ except ModuleNotFoundError as exc:  # pragma: no cover - import guard
 
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-if not ANTHROPIC_API_KEY:
-    raise ValueError("ANTHROPIC_API_KEY not found. Set it in your environment or .env file.")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY not found. Set it in your environment or .env file.")
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 AGENT_NAME = os.getenv("AMAZON_AGENT_NAME", "amazon_agent")
 AGENT_PORT = int(os.getenv("AMAZON_AGENT_PORT", "8008"))
 
 AMAZON_MCP_COMMAND = os.getenv("AMAZON_MCP_COMMAND", "uvx")
 _raw_args = os.getenv("AMAZON_MCP_ARGS")
-if _raw_args:
-    AMAZON_MCP_ARGS = _raw_args.split()
-else:
-    AMAZON_MCP_ARGS = ["amazon-mcp"]
+AMAZON_MCP_ARGS = _raw_args.split() if _raw_args else ["amazon-mcp"]
 
 default_timeout = 30 * 60  # 30 minutes
 SESSION_TIMEOUT = int(os.getenv("AMAZON_SESSION_TIMEOUT_SECONDS", str(default_timeout)))
@@ -64,14 +66,15 @@ user_sessions: Dict[str, Dict[str, Any]] = {}
 # ---------------------------------------------------------------------------
 
 class AmazonMCPClient:
-    """Thin wrapper around the amazon-mcp server with Anthropic tool calling."""
+    """Thin wrapper around the amazon-mcp server with Gemini tool calling."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
         self._exit_stack = AsyncExitStack()
         self._session: Optional[mcp.ClientSession] = None
-        self.anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
         self.tools: List[Dict[str, Any]] = []
+        self._gemini_tools: List[Dict[str, Any]] = []
+        self._model: Optional[genai.GenerativeModel] = None
 
     async def connect(self) -> None:
         """Launch the MCP server (if needed) and cache the tool manifest."""
@@ -85,10 +88,15 @@ class AmazonMCPClient:
                 " ".join(AMAZON_MCP_ARGS),
             )
 
+            mcp_env = os.environ.copy()
+            if "FEWSATS_API_KEY" in mcp_env:
+                # uvx might not inherit env vars correctly, so we ensure it's there
+                pass
+
             server_params = mcp.StdioServerParameters(
                 command=AMAZON_MCP_COMMAND,
                 args=AMAZON_MCP_ARGS,
-                env=None,  # inherit current environment (incl. FEWSATS_API_KEY if set)
+                env=mcp_env,
             )
 
             reader, writer = await self._exit_stack.enter_async_context(
@@ -101,71 +109,166 @@ class AmazonMCPClient:
             await self._session.initialize()
 
             tools_response = await self._session.list_tools()
-            self.tools = self._convert_mcp_tools_to_anthropic_format(tools_response.tools)
+            self.tools = tools_response.tools
+            self._gemini_tools = self._convert_mcp_tools_to_gemini(tools_response.tools)
+            self._model = genai.GenerativeModel(
+                GEMINI_MODEL,
+                tools=self._gemini_tools,
+                generation_config={"max_output_tokens": 2048},
+            )
 
             self._ctx.logger.info("Amazon MCP connected with %d tools", len(self.tools))
-            for tool in tools_response.tools:
+            for tool in self.tools:
                 self._ctx.logger.info("Tool available: %s", tool.name)
 
         except Exception as exc:  # pragma: no cover - depends on runtime environment
             self._ctx.logger.error("Failed to connect to Amazon MCP server: %s", exc)
             raise
 
-    def _convert_mcp_tools_to_anthropic_format(self, tools: List[Any]) -> List[Dict[str, Any]]:
-        formatted: List[Dict[str, Any]] = []
+    def _convert_mcp_tools_to_gemini(self, tools: List[Any]) -> List[Dict[str, Any]]:
+        declarations: List[Dict[str, Any]] = []
         for tool in tools:
-            formatted.append(
+            raw_schema = getattr(tool, "inputSchema", None)
+            if raw_schema is None:
+                raw_schema = {"type": "object", "properties": {}}
+            sanitized_schema = self._sanitize_schema(raw_schema)
+
+            declarations.append(
                 {
                     "name": tool.name,
-                    "description": getattr(tool, "description", "") or f"Amazon tool: {tool.name}",
-                    "input_schema": getattr(tool, "inputSchema", None) or {
-                        "type": "object",
-                        "properties": {},
-                    },
+                    "description": getattr(tool, "description", "")
+                    or f"Amazon tool: {tool.name}",
+                    "parameters": sanitized_schema,
                 }
             )
-        return formatted
+        return [{"function_declarations": declarations}]
+
+    def _sanitize_schema(self, schema: Any) -> Any:
+        """Remove fields unsupported by Gemini function schemas."""
+
+        if isinstance(schema, dict):
+            allowed_keys = {
+                "type",
+                "description",
+                "properties",
+                "required",
+                "items",
+                "enum",
+                # "additionalProperties", - This seems to cause issues with some mcp versions
+            }
+            cleaned: Dict[str, Any] = {}
+            for key, value in schema.items():
+                if key == "title":
+                    continue
+                if key not in allowed_keys:
+                    continue
+                if key == "properties" and isinstance(value, dict):
+                    cleaned[key] = {
+                        prop_name: self._sanitize_schema(prop_schema)
+                        for prop_name, prop_schema in value.items()
+                    }
+                elif key in {"items"}:
+                    cleaned[key] = self._sanitize_schema(value)
+                elif key in {"anyOf", "oneOf", "allOf"} and isinstance(value, list):
+                    cleaned[key] = [self._sanitize_schema(item) for item in value]
+                else:
+                    cleaned[key] = self._sanitize_schema(value)
+            if cleaned.get("type") == "object" and "properties" not in cleaned:
+                cleaned.setdefault("properties", {})
+            return cleaned
+        if isinstance(schema, list):
+            return [self._sanitize_schema(item) for item in schema]
+        return schema
 
     async def process_query(self, query: str) -> str:
-        """Route a natural language query through Claude tool-calling."""
+        """Route a natural language query through Gemini tool-calling."""
         await self.connect()
         assert self._session is not None  # for type checkers
+        if self._model is None:
+            raise RuntimeError("Gemini model was not initialised")
 
         self._ctx.logger.info("Processing query: %s", query)
 
         try:
-            response = self.anthropic.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=2048,
-                tools=self.tools,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            "You are an e-commerce concierge."
-                            " Use the available Amazon tools to search, summarise,"
-                            " and help the shopper make informed decisions."
-                            f"\n\nCustomer request: {query}"
-                        ),
-                    }
-                ],
+            prompt = (
+                "You are an e-commerce concierge. Use the available Amazon MCP tools"
+                " to search for products, surface offers, or retrieve order details."
+                " If no tool is needed, respond directly."
+                f"\n\nCustomer request: {query}"
             )
 
-            tool_use = next((block for block in response.content if block.type == "tool_use"), None)
-            if tool_use:
-                self._ctx.logger.info("Claude selected tool '%s' with input %s", tool_use.name, tool_use.input)
-                tool_result = await self._session.call_tool(tool_use.name, tool_use.input)
+            response = self._model.generate_content(
+                contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                tools=self._gemini_tools,
+            )
+
+            tool_call = self._extract_tool_call(response)
+            if tool_call:
+                self._ctx.logger.info(
+                    "Gemini selected tool '%s' with input %s",
+                    tool_call["name"],
+                    tool_call["args"],
+                )
+                tool_result = await self._session.call_tool(tool_call["name"], tool_call["args"])
                 return self.format_response(tool_result.content)
 
-            direct_reply = next((block for block in response.content if block.type == "text"), None)
+            direct_reply = self._extract_text_reply(response)
             if direct_reply:
-                return direct_reply.text
+                return direct_reply
 
             return "I can search Amazon for products, compare offers, or look up order information."
 
         except Exception as exc:  # pragma: no cover - external API call
             self._ctx.logger.error("Error while processing Amazon query: %s", exc)
             return f"Sorry, something went wrong handling your Amazon request: {exc}"
+
+    def _extract_tool_call(self, response: Any) -> Optional[Dict[str, Any]]:
+        try:
+            candidates = getattr(response, "candidates", None) or []
+            for candidate in candidates:
+                content = getattr(candidate, "content", None)
+                if not content:
+                    continue
+                parts = getattr(content, "parts", None) or []
+                for part in parts:
+                    function_call = getattr(part, "function_call", None)
+                    if function_call:
+                        name = getattr(function_call, "name", None)
+                        args = getattr(function_call, "args", {})
+                        if name:
+                            if hasattr(args, "items"):
+                                args = dict(args)
+                            elif isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except json.JSONDecodeError:
+                                    args = {"input": args}
+                            elif isinstance(args, (list, tuple)):
+                                try:
+                                    args = dict(args)
+                                except Exception:  # pragma: no cover - defensive
+                                    args = {"input": list(args)}
+                            else:
+                                args = dict(args) if getattr(args, "items", None) else {}
+                            return {"name": name, "args": args or {}}
+        except Exception as exc:  # pragma: no cover - defensive
+            self._ctx.logger.error("Failed to parse tool call from Gemini response: %s", exc)
+        return None
+
+    def _extract_text_reply(self, response: Any) -> Optional[str]:
+        try:
+            candidates = getattr(response, "candidates", None) or []
+            for candidate in candidates:
+                content = getattr(candidate, "content", None)
+                if not content:
+                    continue
+                parts = getattr(content, "parts", None) or []
+                texts = [getattr(part, "text", "") for part in parts if getattr(part, "text", "")]
+                if texts:
+                    return "\n".join(texts).strip()
+        except Exception as exc:  # pragma: no cover - defensive
+            self._ctx.logger.error("Failed to parse text reply from Gemini response: %s", exc)
+        return None
 
     def format_response(self, content: Any) -> str:
         """Normalise the MCP content payload into a readable string."""
@@ -193,35 +296,57 @@ class AmazonMCPClient:
 
     def _extract_payload(self, content: Any) -> Any:
         """Pull the first useful item out of the MCP content array."""
-        if isinstance(content, list):
-            if not content:
-                return {}
-            first = content[0]
-            if hasattr(first, "text"):
-                return self._parse_json_if_possible(first.text)
-            if isinstance(first, dict):
-                return first
-            return content
+        self._ctx.logger.info(f"Content to parse: {content} (type: {type(content)})")
+        if isinstance(content, list) and content:
+            # Handle list of TextContent objects from MCP
+            if all(hasattr(item, "text") for item in content):
+                full_text = "".join(item.text for item in content)
+                return self._parse_json_if_possible(full_text)
+
+            # Fallback for other list types
+            item = content[0]
+            if hasattr(item, "text"):
+                return self._parse_json_if_possible(item.text)
+            if isinstance(item, dict):
+                text_field = item.get("text") or item.get("body")
+                if isinstance(text_field, str):
+                    return self._parse_json_if_possible(text_field)
+                return item
+            return self._parse_json_if_possible(str(item))
+
         if isinstance(content, dict):
             return content
         if hasattr(content, "text"):
             return self._parse_json_if_possible(content.text)  # type: ignore[attr-defined]
         if isinstance(content, str):
             return self._parse_json_if_possible(content)
+        print("My Content:", content)
         return content
 
     def _parse_json_if_possible(self, raw: str) -> Any:
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
+            # Handle the case where the response is a status code followed by concatenated JSON
+            # e.g., "200{...}{...}"
+            if raw.startswith("200") and raw[3] == "{":
+                json_stream = raw[3:]
+                # Replace "}{" with "},{" to create a valid JSON array string
+                json_array_str = f"[{json_stream.replace('}{', '},{')}]"
+                try:
+                    return json.loads(json_array_str)
+                except json.JSONDecodeError:
+                    # Fallback to original raw string if array conversion fails
+                    return raw
             return raw
 
     def _format_products(self, payload: Dict[str, Any]) -> str:
-        products = payload.get("products", [])
+        # The payload might be the list of products directly
+        products = payload if isinstance(payload, list) else payload.get("products", [])
         if not products:
             return "🛒 No products found for that request."
 
-        query = payload.get("query") or payload.get("searchQuery")
+        query = payload.get("query") or payload.get("searchQuery") if isinstance(payload, dict) else None
         header = f"🛒 Amazon Products ({len(products)} found)"
         if query:
             header += f" for '{query}'"
@@ -307,6 +432,8 @@ class AmazonMCPClient:
             await self._exit_stack.aclose()
         self._session = None
         self.tools = []
+        self._gemini_tools = []
+        self._model = None
 
 
 # ---------------------------------------------------------------------------
