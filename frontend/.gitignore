@@ -101,4 +101,4 @@ build/
 
 # Vite
 dist-ssr
-*.local
+*.local__pycache__/
