@@ -68,18 +68,20 @@ export default function FaceLandmarkerApp() {
   const [responseWords, setResponseWords] = useState<string[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [currentSuggestions, setCurrentSuggestions] = useState<SuggestionNode[]>([]);
+  const [isSubmitPressed, setIsSubmitPressed] = useState(false);
 
   const columns = Math.min(3, Math.max(1, navigatorOptions.length));
   const prevActiveGesturesRef = useRef<string[]>([]);
+  const submitFlashTimeoutRef = useRef<number | null>(null);
 
   const responseText = useMemo(() => responseWords.join(" "), [responseWords]);
   const trimmedResponse = useMemo(() => responseText.trim(), [responseText]);
   const gridOptions = useMemo<NavigatorGridOption[]>(
     () => [
       ...navigatorOptions.map((word) => ({ type: "word" as const, label: word })),
-      { type: "submit" as const, label: "Submit Response" },
+      ...(trimmedResponse ? [{ type: "submit" as const, label: "Submit Response" }] : []),
     ],
-    [navigatorOptions]
+    [navigatorOptions, trimmedResponse]
   );
 
   const resetNavigator = useCallback(() => {
@@ -166,6 +168,27 @@ export default function FaceLandmarkerApp() {
   useEffect(() => {
     setCurrentWordIndex(0);
   }, [navigatorOptions]);
+
+  useEffect(() => {
+    if (!trimmedResponse && isSubmitPressed) {
+      setIsSubmitPressed(false);
+    }
+  }, [isSubmitPressed, trimmedResponse]);
+
+  useEffect(() => {
+    setCurrentWordIndex((current) => {
+      if (gridOptions.length === 0) return 0;
+      return Math.min(current, gridOptions.length - 1);
+    });
+  }, [gridOptions.length]);
+
+  useEffect(() => {
+    return () => {
+      if (submitFlashTimeoutRef.current !== null) {
+        window.clearTimeout(submitFlashTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const isSelectActive = activeGestures.includes("Select");
 
@@ -289,15 +312,26 @@ export default function FaceLandmarkerApp() {
       return;
     }
 
-    speakText(trimmedResponse);
-    setTranscript("");
-    setInterimTranscript("");
-    resetNavigator();
-
-    stopTranscription();
-    if (isRunning && isSpeechSupported) {
-      startTranscription();
+    if (submitFlashTimeoutRef.current !== null) {
+      window.clearTimeout(submitFlashTimeoutRef.current);
     }
+
+    setIsSubmitPressed(true);
+    speakText(trimmedResponse);
+    stopTranscription();
+
+    submitFlashTimeoutRef.current = window.setTimeout(() => {
+      setTranscript("");
+      setInterimTranscript("");
+      resetNavigator();
+      setIsSubmitPressed(false);
+
+      if (isRunning && isSpeechSupported) {
+        startTranscription();
+      }
+
+      submitFlashTimeoutRef.current = null;
+    }, 220);
   }, [isRunning, isSpeechSupported, resetNavigator, startTranscription, stopTranscription, trimmedResponse]);
 
   const handleSelectGesture = useCallback(async () => {
@@ -786,12 +820,14 @@ export default function FaceLandmarkerApp() {
                       if (!hasResponse) {
                         itemClasses += " border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed";
                       } else if (isActive) {
-                        itemClasses += isSelectActive
-                          ? " border-emerald-500 bg-emerald-600 text-white"
-                          : " border-emerald-400 bg-emerald-100 text-emerald-700";
+                        if (isSubmitPressed || isSelectActive) {
+                          itemClasses += " border-emerald-600 bg-emerald-600 text-white";
+                        } else {
+                          itemClasses += " border-emerald-400 bg-emerald-50 text-emerald-700";
+                        }
                         itemClasses += " cursor-pointer";
                       } else {
-                        itemClasses += " border-emerald-400 bg-emerald-50 text-emerald-700 cursor-pointer";
+                        itemClasses += " border-slate-200 bg-white text-emerald-600 cursor-pointer";
                       }
                     } else if (isInformational) {
                       itemClasses += " border-slate-200 bg-slate-50 text-slate-400";
