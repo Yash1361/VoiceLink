@@ -899,6 +899,7 @@ export default function FaceLandmarkerApp() {
       stopTranscription();
 
       try {
+        const partialAnswer = trimmedResponse;
         const response = await fetch(SUGGEST_ENDPOINT, {
           method: "POST",
           headers: {
@@ -906,7 +907,7 @@ export default function FaceLandmarkerApp() {
           },
           body: JSON.stringify({
             question: questionText,
-            partial_answer: "",
+            partial_answer: partialAnswer,
             suggestions_count: 5,
           }),
         });
