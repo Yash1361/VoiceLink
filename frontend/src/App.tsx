@@ -415,6 +415,7 @@ export default function FaceLandmarkerApp() {
   const [typedBuffer, setTypedBuffer] = useState("");
   const [activeQuestion, setActiveQuestion] = useState<string | null>(null);
   const [isDeveloperMode, setIsDeveloperMode] = useState(false);
+  const [isTranscriptionDisabled, setIsTranscriptionDisabled] = useState(false);
   const [sentenceViewportColumns, setSentenceViewportColumns] = useState<number>(() =>
     getSentenceViewportColumns()
   );
@@ -687,6 +688,11 @@ export default function FaceLandmarkerApp() {
       conversationContext?: string;
       loadingMessage?: string;
     }) => {
+      // Don't request suggestions if transcription is disabled for the session
+      if (isTranscriptionDisabled) {
+        return false;
+      }
+      
       const resolvedQuestion = (question ?? activeQuestion ?? "").trim();
       if (!resolvedQuestion) {
         return false;
@@ -799,7 +805,7 @@ export default function FaceLandmarkerApp() {
         }
       }
     },
-    [activeQuestion, conversationHistory]
+    [activeQuestion, conversationHistory, isTranscriptionDisabled]
   );
   const gridOptions = useMemo<NavigatorGridOption[]>(
     () => {
@@ -828,19 +834,32 @@ export default function FaceLandmarkerApp() {
   const duckFocusOrder = useMemo(() => ["query", "run", "reset"] as const, []);
 
   const agentMailFocusTargets = useMemo<string[]>(() => {
+    const quickOptions = (() => {
+      if (agentMailStep === "recipient") {
+        return AGENT_MAIL_RECIPIENT_OPTIONS.map((_, index) => `quickOption_${index}`);
+      }
+      if (agentMailStep === "subject") {
+        return AGENT_MAIL_SUBJECT_OPTIONS.map((_, index) => `quickOption_${index}`);
+      }
+      if (agentMailStep === "body") {
+        return agentMailBodyQuickOptions.map((_, index) => `quickOption_${index}`);
+      }
+      return [];
+    })();
+
     switch (agentMailStep) {
       case "recipient":
-        return ["recipientInput", "next"];
+        return [...quickOptions, "recipientInput", "next"];
       case "subject":
-        return ["subjectInput", "next"];
+        return [...quickOptions, "subjectInput", "next"];
       case "body":
-        return ["bodyInput", "send"];
+        return [...quickOptions, "bodyInput", "send"];
       case "result":
         return ["result"];
       default:
-        return ["recipientInput", "next"];
+        return [...quickOptions, "recipientInput", "next"];
     }
-  }, [agentMailStep]);
+  }, [agentMailStep, agentMailBodyQuickOptions]);
 
   useEffect(() => {
     setAgentMailFocusIndex((current) => {
@@ -857,16 +876,9 @@ export default function FaceLandmarkerApp() {
     if (isAgentSelectionView) {
       return [] as string[];
     }
+    // Don't show suggestions in agent mail since we have quick options above
     if (activeAgent === "agentmail") {
-      if (agentMailStep === "recipient") {
-        return AGENT_MAIL_RECIPIENT_OPTIONS.map((option) => option.value);
-      }
-      if (agentMailStep === "subject") {
-        return AGENT_MAIL_SUBJECT_OPTIONS.map((option) => option.value);
-      }
-      if (agentMailStep === "body") {
-        return agentMailBodyQuickOptions;
-      }
+      return [] as string[];
     }
     if (activeAgent === "duckduckgo") {
       const focus = duckFocusOrder[duckFocusIndex];
@@ -881,8 +893,6 @@ export default function FaceLandmarkerApp() {
     return [] as string[];
   }, [
     activeAgent,
-    agentMailBodyQuickOptions,
-    agentMailStep,
     duckFocusIndex,
     duckFocusOrder,
     isAgentSelectionView,
@@ -1077,13 +1087,72 @@ export default function FaceLandmarkerApp() {
       }
 
       if (activeAgent === "agentmail") {
-        const step = direction === "Left" || direction === "Up" ? -1 : 1;
+        const quickOptionsCount = (() => {
+          if (agentMailStep === "recipient") return AGENT_MAIL_RECIPIENT_OPTIONS.length;
+          if (agentMailStep === "subject") return AGENT_MAIL_SUBJECT_OPTIONS.length;
+          if (agentMailStep === "body") return agentMailBodyQuickOptions.length;
+          return 0;
+        })();
+
         setAgentMailFocusIndex((current) => {
           const total = agentMailFocusTargets.length;
           if (total === 0) {
             return 0;
           }
-          const next = (current + step + total) % total;
+
+          const currentFocus = agentMailFocusTargets[current];
+          const isInQuickOptions = currentFocus?.startsWith("quickOption_");
+          const isInInput = currentFocus === "recipientInput" || currentFocus === "subjectInput" || currentFocus === "bodyInput";
+          const isInAction = currentFocus === "next" || currentFocus === "send" || currentFocus === "result";
+
+          let next: number;
+          
+          if (direction === "Up" || direction === "Down") {
+            // Grid-like navigation: quick options are like first row, input is second row, action is third row
+            if (isInQuickOptions) {
+              if (direction === "Down") {
+                // Move to input field
+                next = quickOptionsCount;
+              } else {
+                // Stay in quick options, wrap around
+                const step = direction === "Up" ? -1 : 1;
+                next = (current + step + quickOptionsCount) % quickOptionsCount;
+              }
+            } else if (isInInput) {
+              if (direction === "Up") {
+                // Move to quick options (first one)
+                next = 0;
+              } else {
+                // Move to action button
+                next = quickOptionsCount + 1;
+              }
+            } else if (isInAction) {
+              if (direction === "Up") {
+                // Move to input field
+                next = quickOptionsCount;
+              } else {
+                // Stay on action button
+                next = current;
+              }
+            } else {
+              next = current;
+            }
+          } else {
+            // Left/Right navigation within the same row
+            if (isInQuickOptions) {
+              const step = direction === "Left" ? -1 : 1;
+              next = (current + step + quickOptionsCount) % quickOptionsCount;
+            } else if (isInInput || isInAction) {
+              // Input and action buttons don't have left/right navigation
+              next = current;
+            } else {
+              next = current;
+            }
+          }
+
+          // Ensure next is within bounds
+          next = Math.max(0, Math.min(next, total - 1));
+          
           const focus = agentMailFocusTargets[next];
           if (focus === "recipientInput") {
             setAgentKeyboardValue(agentMailDraft.to);
@@ -1329,6 +1398,39 @@ export default function FaceLandmarkerApp() {
     }
 
     if (activeAgent === "agentmail") {
+      const focus = activeAgentMailFocus;
+      
+      // Handle quick option selection
+      if (focus?.startsWith("quickOption_")) {
+        const optionIndex = parseInt(focus.split("_")[1]);
+        let selectedValue: string;
+        
+        if (agentMailStep === "recipient") {
+          selectedValue = AGENT_MAIL_RECIPIENT_OPTIONS[optionIndex]?.value || "";
+          applyAgentMailValue("to", selectedValue);
+          // Automatically advance to next step
+          advanceAgentMailStep("subject");
+        } else if (agentMailStep === "subject") {
+          selectedValue = AGENT_MAIL_SUBJECT_OPTIONS[optionIndex]?.value || "";
+          applyAgentMailValue("subject", selectedValue);
+          // Automatically advance to next step
+          advanceAgentMailStep("body");
+        } else if (agentMailStep === "body") {
+          selectedValue = agentMailBodyQuickOptions[optionIndex] || "";
+          applyAgentMailValue("body", selectedValue);
+          // Automatically advance to next step (send email)
+          handleAgentMailSend();
+        }
+        return;
+      }
+      
+      // Handle action button selection
+      if (focus === "next" || focus === "send" || focus === "result") {
+        goToNextAgentMailStep();
+        return;
+      }
+      
+      // Default behavior for input fields
       goToNextAgentMailStep();
       return;
     }
@@ -1354,10 +1456,14 @@ export default function FaceLandmarkerApp() {
     }
   }, [
     activeAgent,
+    activeAgentMailFocus,
+    advanceAgentMailStep,
     agentCurrentIndex,
+    agentMailBodyQuickOptions,
     agentMailDraft,
     agentMailStep,
     agentOptions,
+    applyAgentMailValue,
     duckFocusIndex,
     duckFocusOrder,
     duckSearchQuery,
@@ -1390,7 +1496,7 @@ export default function FaceLandmarkerApp() {
   }, []);
 
   const focusAgentMailTarget = useCallback(
-    (target: "recipientInput" | "subjectInput" | "bodyInput" | "next" | "send" | "result") => {
+    (target: string) => {
       const index = agentMailFocusTargets.indexOf(target);
       if (index === -1) return;
       setAgentMailFocusIndex(index);
@@ -2323,22 +2429,26 @@ export default function FaceLandmarkerApp() {
           )}
 
           <div className="flex flex-wrap gap-2">
-            {quickOptions.map((option) => {
+            {quickOptions.map((option, index) => {
               const isSelected =
                 agentMailStep === "recipient"
                   ? agentMailDraft.to.toLowerCase() === option.value.toLowerCase()
                   : agentMailStep === "subject"
                     ? agentMailDraft.subject.toLowerCase() === option.value.toLowerCase()
                     : agentMailDraft.body.toLowerCase() === option.value.toLowerCase();
+              const isFocused = activeAgentMailFocus === `quickOption_${index}`;
               return (
                 <button
                   key={option.value}
                   type="button"
                   onClick={() => handleAgentSuggestionClick(option.value)}
+                  onFocus={() => focusAgentMailTarget(`quickOption_${index}`)}
                   className={`rounded-lg border px-3 py-2 text-sm transition ${
-                    isSelected
-                      ? "border-emerald-400 bg-emerald-50 text-emerald-700"
-                      : "border-slate-200 bg-slate-50 text-slate-600 hover:border-emerald-200 hover:text-emerald-600"
+                    isFocused
+                      ? "border-emerald-500 bg-emerald-100 text-emerald-800 ring-2 ring-emerald-200"
+                      : isSelected
+                        ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                        : "border-slate-200 bg-slate-50 text-slate-600 hover:border-emerald-200 hover:text-emerald-600"
                   }`}
                 >
                   <div className="font-semibold">{option.label}</div>
@@ -2699,6 +2809,9 @@ export default function FaceLandmarkerApp() {
   }, [requestRepeatPrompt]);
 
   const startTranscription = useCallback(() => {
+    // Don't start transcription if it's disabled for the session
+    if (isTranscriptionDisabled) return;
+    
     const recognition = ensureSpeechRecognition();
     if (!recognition) return;
 
@@ -2717,7 +2830,7 @@ export default function FaceLandmarkerApp() {
         setSpeechError("Could not start transcription. Try again.");
       }
     }
-  }, [ensureSpeechRecognition, isTranscribing]);
+  }, [ensureSpeechRecognition, isTranscribing, isTranscriptionDisabled]);
 
   const stopTranscription = useCallback(() => {
     shouldTranscribeRef.current = false;
@@ -3000,6 +3113,8 @@ export default function FaceLandmarkerApp() {
 
     newlyActivated.forEach((gesture) => {
       if (gesture === "Left Wink") {
+        // Disable transcription for the entire session once left wink is detected
+        setIsTranscriptionDisabled(true);
         handleAgentPopupToggle();
         return;
       }
@@ -3025,25 +3140,28 @@ export default function FaceLandmarkerApp() {
         }
       }
 
-      if (gesture === "Select") {
-        handleSelectGesture();
-        return;
-      }
+      // Skip word navigator gestures if transcription is disabled
+      if (!isTranscriptionDisabled) {
+        if (gesture === "Select") {
+          handleSelectGesture();
+          return;
+        }
 
-      if (gesture === "Open keyboard") {
-        handleKeyboardToggle();
-        return;
-      }
+        if (gesture === "Open keyboard") {
+          handleKeyboardToggle();
+          return;
+        }
 
-      if (gesture === "Left" || gesture === "Right" || gesture === "Up" || gesture === "Down") {
-        setCurrentWordIndex((current) => {
-          if (gridOptions.length === 0) {
-            return 0;
-          }
-          const next = moveSelection(current, gesture);
-          const maxIndex = Math.max(0, gridOptions.length - 1);
-          return Math.max(0, Math.min(next, maxIndex));
-        });
+        if (gesture === "Left" || gesture === "Right" || gesture === "Up" || gesture === "Down") {
+          setCurrentWordIndex((current) => {
+            if (gridOptions.length === 0) {
+              return 0;
+            }
+            const next = moveSelection(current, gesture);
+            const maxIndex = Math.max(0, gridOptions.length - 1);
+            return Math.max(0, Math.min(next, maxIndex));
+          });
+        }
       }
     });
 
@@ -3058,6 +3176,7 @@ export default function FaceLandmarkerApp() {
     handleKeyboardToggle,
     handleSelectGesture,
     isAgentPopupOpen,
+    isTranscriptionDisabled,
     moveSelection,
   ]);
 
@@ -3066,6 +3185,8 @@ export default function FaceLandmarkerApp() {
     if (!isDeveloperMode) return;
 
     if (gestureName === "Left Wink") {
+      // Disable transcription for the entire session once left wink is detected
+      setIsTranscriptionDisabled(true);
       handleAgentPopupToggle();
       return;
     }
@@ -3091,25 +3212,28 @@ export default function FaceLandmarkerApp() {
       }
     }
 
-    if (gestureName === "Select") {
-      handleSelectGesture();
-      return;
-    }
+    // Skip word navigator gestures if transcription is disabled
+    if (!isTranscriptionDisabled) {
+      if (gestureName === "Select") {
+        handleSelectGesture();
+        return;
+      }
 
-    if (gestureName === "Open keyboard") {
-      handleKeyboardToggle();
-      return;
-    }
+      if (gestureName === "Open keyboard") {
+        handleKeyboardToggle();
+        return;
+      }
 
-    if (gestureName === "Left" || gestureName === "Right" || gestureName === "Up" || gestureName === "Down") {
-      setCurrentWordIndex((current) => {
-        if (gridOptions.length === 0) {
-          return 0;
-        }
-        const next = moveSelection(current, gestureName);
-        const maxIndex = Math.max(0, gridOptions.length - 1);
-        return Math.max(0, Math.min(next, maxIndex));
-      });
+      if (gestureName === "Left" || gestureName === "Right" || gestureName === "Up" || gestureName === "Down") {
+        setCurrentWordIndex((current) => {
+          if (gridOptions.length === 0) {
+            return 0;
+          }
+          const next = moveSelection(current, gestureName);
+          const maxIndex = Math.max(0, gridOptions.length - 1);
+          return Math.max(0, Math.min(next, maxIndex));
+        });
+      }
     }
   }, [
     closeAgentPopup,
@@ -3121,6 +3245,7 @@ export default function FaceLandmarkerApp() {
     handleSelectGesture,
     isAgentPopupOpen,
     isDeveloperMode,
+    isTranscriptionDisabled,
     moveSelection,
   ]);
 
@@ -3343,6 +3468,7 @@ export default function FaceLandmarkerApp() {
     await startCamera();
     setConversationHistory([]);
     resetNavigator();
+    setIsTranscriptionDisabled(false); // Reset transcription disabled flag on restart
     setIsRunning(true);
     startTranscription();
     rafRef.current = requestAnimationFrame(loop);
@@ -3694,10 +3820,17 @@ export default function FaceLandmarkerApp() {
               <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-slate-500">
                   <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isTranscribing && isRunning ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
+                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                      isTranscriptionDisabled 
+                        ? "bg-amber-50 text-amber-700" 
+                        : isTranscribing && isRunning 
+                          ? "bg-emerald-50 text-emerald-700" 
+                          : "bg-slate-100 text-slate-500"
+                    }`}
                   >
-                    {isTranscribing && isRunning ? "Listening" : "Idle"}
+                    {isTranscriptionDisabled ? "Disabled" : isTranscribing && isRunning ? "Listening" : "Idle"}
                   </span>
+                  {isTranscriptionDisabled ? <span className="text-amber-600">Agent mode active</span> : null}
                   {speechError ? <span className="text-rose-600">{speechError}</span> : null}
                 </div>
                 <div className="w-full min-h-[120px] rounded-xl bg-slate-50 p-3 border border-slate-100 text-sm text-slate-700 whitespace-pre-wrap">
