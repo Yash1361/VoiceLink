@@ -76,7 +76,7 @@ def create_app() -> FastAPI:
         attempt = 0
         while True:
             try:
-                suggestions = await service.apredict_next_words(
+                result = await service.apredict_next_words(
                     question=payload.question,
                     partial_answer=payload.partial_answer,
                     suggestions_count=payload.suggestions_count,
@@ -116,7 +116,10 @@ def create_app() -> FastAPI:
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=str(exc),
                 ) from exc
-        return SuggestionResponse(suggestions=suggestions)
+        return SuggestionResponse(
+            suggestions=result["suggestions"],
+            sentences=result["sentences"],
+        )
 
     return application
 

@@ -7,7 +7,7 @@ from typing import Iterable
 from langchain_core.exceptions import OutputParserException
 
 from .config import Settings, get_settings
-from .prompts import SuggestionBranch, build_suggestion_chain
+from .prompts import SentenceSuggestion, SuggestionBranch, build_suggestion_chain
 
 
 class SuggestionError(RuntimeError):
@@ -39,7 +39,7 @@ class AutocompleteService:
         question: str,
         partial_answer: str,
         suggestions_count: int | None = None,
-    ) -> list[SuggestionBranch]:
+    ) -> dict[str, list]:
         """Predict the next-word suggestion tree synchronously."""
         count = suggestions_count or self.settings.suggestions_count
         try:
@@ -55,7 +55,8 @@ class AutocompleteService:
         tree = _sanitize_suggestions(payload.suggestions, count)
         if not tree:
             raise SuggestionError("LLM returned no valid suggestions")
-        return tree
+        sentences = _sanitize_sentences(payload.sentences)
+        return {"suggestions": tree, "sentences": sentences}
 
     async def apredict_next_words(
         self,
@@ -63,7 +64,7 @@ class AutocompleteService:
         question: str,
         partial_answer: str,
         suggestions_count: int | None = None,
-    ) -> list[SuggestionBranch]:
+    ) -> dict[str, list]:
         """Predict the next-word suggestion tree asynchronously."""
         count = suggestions_count or self.settings.suggestions_count
         try:
@@ -79,7 +80,8 @@ class AutocompleteService:
         tree = _sanitize_suggestions(payload.suggestions, count)
         if not tree:
             raise SuggestionError("LLM returned no valid suggestions")
-        return tree
+        sentences = _sanitize_sentences(payload.sentences)
+        return {"suggestions": tree, "sentences": sentences}
 
 
 def _sanitize_suggestions(
@@ -136,3 +138,30 @@ def _sanitize_branch(
             children.append(cleaned_child)
 
     return SuggestionBranch(word=word, next=children)
+
+
+def _sanitize_sentences(
+    sentences: Iterable[SentenceSuggestion],
+) -> list[SentenceSuggestion]:
+    """Keep distinct, trimmed sentence suggestions ordered by preferred style."""
+
+    preferred_order = {"smart": 0, "funny": 1, "casual": 2}
+    seen_styles: set[str] = set()
+    sanitized: list[SentenceSuggestion] = []
+
+    for suggestion in sentences:
+        style_raw = (suggestion.style or "").strip().lower()
+        text = (suggestion.text or "").strip()
+        if not text:
+            continue
+        style = style_raw if style_raw else "smart"
+        key = style
+        if key in seen_styles:
+            continue
+        seen_styles.add(key)
+        sanitized.append(SentenceSuggestion(style=style, text=text))
+        if len(sanitized) >= 3:
+            break
+
+    sanitized.sort(key=lambda item: preferred_order.get(item.style, len(preferred_order)))
+    return sanitized

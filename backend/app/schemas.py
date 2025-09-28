@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from .prompts import SuggestionBranch
+from .prompts import SentenceSuggestion, SuggestionBranch
 
 
 class SuggestionRequest(BaseModel):
@@ -19,3 +19,4 @@ class SuggestionResponse(BaseModel):
     """Response returned to the frontend."""
 
     suggestions: list[SuggestionBranch]
+    sentences: list[SentenceSuggestion]

@@ -35,15 +35,25 @@ class SuggestionBranch(BaseModel):
 
     word: str = Field(
         ...,
-        description=(
-            "A candidate word the user might speak at this turn."
-        ),
+        description="A candidate word the user might speak at this turn.",
     )
     next: list["SuggestionBranch"] = Field(
         default_factory=list,
-        description=(
-            "Possible follow-up words if the user selects this word."
-        ),
+        description="Possible follow-up words if the user selects this word.",
+    )
+
+
+class SentenceSuggestion(BaseModel):
+    """Full-sentence recommendation with a tone label."""
+
+    style: str = Field(
+        ...,
+        description="Tone label for the sentence. Expected values: smart, funny, casual.",
+    )
+    text: str = Field(
+        ...,
+        description="Full-sentence response the user could speak.",
+        min_length=1,
     )
 
 
@@ -52,9 +62,11 @@ class SuggestionPayload(BaseModel):
 
     suggestions: list[SuggestionBranch] = Field(
         ...,
-        description=(
-            "Nested tree of candidate words with follow-up options for the next 3-4 turns."
-        ),
+        description="Nested tree of candidate words with follow-up options for the next 3-4 turns.",
+    )
+    sentences: list[SentenceSuggestion] = Field(
+        ...,
+        description="Three complete sentence suggestions labelled smart, funny, and casual.",
     )
 
 
@@ -67,21 +79,26 @@ PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You help a user craft a spoken reply by building a branching tree of next-word suggestions. "
-            "You are always given a full sentence that someone else just said and the partial reply the user "
-            "has already spoken. Respond only with JSON matching this schema:\n{format_instructions}\nGuidelines:\n"
-            "- Provide exactly {suggestions_count} root-level options ordered from most to least likely.\n"
-            "- Every 'word' must be a single conversational word in lowercase unless a proper noun or acronym is required.\n"
-            "- For each root option, populate `next` with 2-3 follow-up words and continue expanding each branch until it reaches a depth of at least 3 levels (root + 2) and at most 4.\n"
+            "You help a user craft a spoken reply by building both concise next-word suggestions and a few complete sentences. "
+            "You are always given a full sentence that someone else just said and the partial reply the user has already spoken. "
+            "Respond only with JSON matching this schema:\n{format_instructions}\nGuidelines:\n"
+            "Word suggestions:\n"
+            "- Provide exactly {suggestions_count} root-level word options ordered from most to least likely.\n"
+            "- Every `word` must be a single conversational token in lowercase unless a proper noun or acronym is required.\n"
+            "- For each root word, populate `next` with 2-3 follow-up words and continue expanding each branch until it reaches a depth of at least 3 levels (root + 2) and at most 4.\n"
             "- Ensure each follow-up word is contextually coherent given the previous selections and the incoming sentence.\n"
             "- Do not repeat the same word within the same branch. Trim whitespace and omit punctuation or fillers.\n"
-            "- If a branch cannot continue naturally, leave its `next` list empty but explore alternative continuations elsewhere.\n",
+            "Sentence suggestions:\n"
+            "- Produce exactly three complete sentences in the `sentences` array.\n"
+            "- Use the styles `smart`, `funny`, and `casual` once each.\n"
+            "- Each sentence should be natural, succinct (max ~20 words), and aligned with the specified style while staying relevant to the conversation.\n"
+            "- Sentences must not repeat verbatim what appears in the word suggestions.\n",
         ),
         (
             "human",
             "Incoming sentence from another person: {question}\n"
             "User's reply so far: {partial_answer}\n"
-            "Produce a nested tree of candidate words following the schema above.",
+            "Produce the JSON with both the nested word suggestions and the three styled full-sentence options.",
         ),
     ]
 ).partial(format_instructions=SUGGESTION_PARSER.get_format_instructions())
