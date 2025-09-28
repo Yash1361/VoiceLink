@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Camera, CameraOff, Sparkles, Activity, Play, Pause, X } from "lucide-react";
+import { Camera, CameraOff, Sparkles, Activity, Play, Pause, X, Cpu } from "lucide-react";
 import { useBlendshapeGestures } from "./hooks/useGesture";
 
 
@@ -9,6 +9,15 @@ import { useBlendshapeGestures } from "./hooks/useGesture";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/, "");
 const SUGGEST_ENDPOINT = `${API_BASE_URL}/suggest`;
+const SENTENCE_GRID_BREAKPOINT = 640;
+const SENTENCE_GRID_MAX_COLUMNS = 3;
+
+const getSentenceViewportColumns = () => {
+  if (typeof window === "undefined") {
+    return 1;
+  }
+  return window.innerWidth >= SENTENCE_GRID_BREAKPOINT ? SENTENCE_GRID_MAX_COLUMNS : 1;
+};
 
 const speakText = (text: string) => {
   if (!text) return;
@@ -76,8 +85,17 @@ export default function FaceLandmarkerApp() {
   const [currentSuggestions, setCurrentSuggestions] = useState<SuggestionNode[]>([]);
   const [sentenceSuggestions, setSentenceSuggestions] = useState<SentenceSuggestion[]>([]);
   const [isSubmitPressed, setIsSubmitPressed] = useState(false);
+  const [sentenceViewportColumns, setSentenceViewportColumns] = useState<number>(() =>
+    getSentenceViewportColumns()
+  );
 
   const columns = Math.min(3, Math.max(1, navigatorOptions.length));
+  const sentenceColumns = useMemo(() => {
+    if (!sentenceSuggestions.length) {
+      return 1;
+    }
+    return Math.max(1, Math.min(sentenceViewportColumns, sentenceSuggestions.length));
+  }, [sentenceSuggestions.length, sentenceViewportColumns]);
   const prevActiveGesturesRef = useRef<string[]>([]);
   const submitFlashTimeoutRef = useRef<number | null>(null);
 
@@ -209,6 +227,23 @@ export default function FaceLandmarkerApp() {
   }, []);
 
   const isSelectActive = activeGestures.includes("Select");
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleResize = () => {
+      setSentenceViewportColumns(getSentenceViewportColumns());
+    };
+
+    window.addEventListener("resize", handleResize);
+    handleResize();
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
 
 
 
@@ -529,48 +564,85 @@ export default function FaceLandmarkerApp() {
           const lastIndex = totalOptions - 1;
           const submitIndex = hasSubmit ? lastIndex : -1;
 
+          const sentenceGridColumns = Math.max(1, sentenceColumns);
+          const wordGridColumns = wordCount > 0 ? Math.min(columns, wordCount) : 0;
+
           switch (gesture) {
             case "Right": {
               if (current === submitIndex) return current;
-              if (current < sentenceCount) return current; // sentences span full width
+              if (current < sentenceCount) {
+                if (sentenceGridColumns <= 1) return current;
+                const nextIndex = current + 1;
+                const sameRow =
+                  Math.floor(current / sentenceGridColumns) ===
+                  Math.floor(nextIndex / sentenceGridColumns);
+                if (nextIndex < sentenceCount && sameRow) {
+                  return nextIndex;
+                }
+                return current;
+              }
               const position = current - sentenceCount;
               if (position < 0 || position >= wordCount) return current;
-              const isEndOfRow = columns <= 1 || position % columns === columns - 1 || position + 1 >= wordCount;
+              const isEndOfRow =
+                wordGridColumns <= 1 ||
+                position % wordGridColumns === wordGridColumns - 1 ||
+                position + 1 >= wordCount;
               return isEndOfRow ? current : current + 1;
             }
             case "Left": {
               if (current === submitIndex) return current;
-              if (current < sentenceCount) return current;
+              if (current < sentenceCount) {
+                if (sentenceGridColumns <= 1) return current;
+                const column = current % sentenceGridColumns;
+                if (column === 0) {
+                  return current;
+                }
+                const previousIndex = current - 1;
+                return previousIndex >= 0 ? previousIndex : current;
+              }
               const position = current - sentenceCount;
               if (position <= 0 || position >= wordCount) return current;
-              const isStartOfRow = position % columns === 0;
+              if (wordGridColumns <= 1) return current;
+              const isStartOfRow = position % wordGridColumns === 0;
               return isStartOfRow ? current : current - 1;
             }
             case "Down": {
               if (current === submitIndex) return current;
               if (current < sentenceCount) {
-                const nextSentence = current + 1;
-                if (nextSentence < sentenceCount) return nextSentence;
-                if (wordCount > 0) return sentenceCount;
+                const column = sentenceGridColumns > 0 ? current % sentenceGridColumns : 0;
+                const nextIndex = current + sentenceGridColumns;
+                if (nextIndex < sentenceCount) {
+                  return nextIndex;
+                }
+                if (wordCount > 0) {
+                  const targetColumn = Math.min(column, Math.max(0, wordGridColumns - 1));
+                  const targetIndex = sentenceCount + targetColumn;
+                  if (targetIndex < sentenceCount + wordCount) {
+                    return targetIndex;
+                  }
+                  return sentenceCount + wordCount - 1;
+                }
                 return hasSubmit ? submitIndex : current;
               }
               const position = current - sentenceCount;
               if (position < 0 || position >= wordCount) {
                 return hasSubmit ? submitIndex : current;
               }
-              const next = current + columns;
-              if (next - sentenceCount < wordCount) {
-                return next;
+              if (wordGridColumns > 0) {
+                const next = current + wordGridColumns;
+                if (next - sentenceCount < wordCount) {
+                  return next;
+                }
               }
               return hasSubmit ? submitIndex : current;
             }
             case "Up": {
               if (current === submitIndex) {
-                if (wordCount > 0) {
+                if (wordCount > 0 && wordGridColumns > 0) {
                   const lastWordIndex = wordCount - 1;
-                  const lastRowStart = Math.max(0, Math.floor(lastWordIndex / columns) * columns);
+                  const lastRowStart = Math.floor(lastWordIndex / wordGridColumns) * wordGridColumns;
                   const lastRowLength = wordCount - lastRowStart;
-                  const desiredColumn = Math.min((lastWordIndex) % columns, lastRowLength - 1);
+                  const desiredColumn = Math.min(lastWordIndex % wordGridColumns, Math.max(0, lastRowLength - 1));
                   return sentenceCount + lastRowStart + desiredColumn;
                 }
                 if (sentenceCount > 0) {
@@ -579,17 +651,30 @@ export default function FaceLandmarkerApp() {
                 return current;
               }
               if (current < sentenceCount) {
-                return Math.max(0, current - 1);
+                const previousIndex = current - sentenceGridColumns;
+                if (previousIndex >= 0) {
+                  return previousIndex;
+                }
+                return current;
               }
               const position = current - sentenceCount;
               if (position < 0 || position >= wordCount) {
                 return sentenceCount > 0 ? sentenceCount - 1 : current;
               }
-              const next = current - columns;
-              if (next >= sentenceCount) {
-                return next;
+              if (wordGridColumns > 0) {
+                const next = current - wordGridColumns;
+                if (next >= sentenceCount) {
+                  return next;
+                }
               }
               if (sentenceCount > 0) {
+                const wordColumn = wordGridColumns > 0 ? position % wordGridColumns : 0;
+                const targetColumn = Math.min(wordColumn, sentenceGridColumns - 1);
+                const sentenceRows = Math.ceil(sentenceCount / sentenceGridColumns);
+                const baseIndex = (sentenceRows - 1) * sentenceGridColumns + targetColumn;
+                if (baseIndex < sentenceCount) {
+                  return baseIndex;
+                }
                 return sentenceCount - 1;
               }
               return current;
@@ -602,7 +687,7 @@ export default function FaceLandmarkerApp() {
     }
 
     prevActiveGesturesRef.current = activeGestures;
-  }, [activeGestures, columns, handleSelectGesture, navigatorOptions, sentenceSuggestions, totalOptions, trimmedResponse]);
+  }, [activeGestures, columns, handleSelectGesture, navigatorOptions, sentenceColumns, sentenceSuggestions, totalOptions, trimmedResponse]);
 
   const loadModel = useCallback(async () => {
     setLoadingMsg("Loading MediaPipe Tasks…");
@@ -751,6 +836,138 @@ export default function FaceLandmarkerApp() {
   }, [stopCamera, stopTranscription]);
 
 
+  const renderWordNavigator = () => {
+    const sentenceCards = (
+      <div
+        className="grid gap-3"
+        style={{ gridTemplateColumns: `repeat(${Math.max(1, sentenceColumns)}, minmax(0, 1fr))` }}
+      >
+        {sentenceSuggestions.map((sentence, idx) => {
+          const optionIndex = idx;
+          const isActive = optionIndex === currentWordIndex;
+          const isPressed = isSubmitPressed && isActive;
+          const title = sentence.style
+            ? sentence.style.charAt(0).toUpperCase() + sentence.style.slice(1)
+            : "Sentence";
+
+          let cardClasses = "rounded-xl border px-4 py-4 text-sm shadow-sm transition-colors";
+          if (isActive) {
+            cardClasses += isPressed || isSelectActive
+              ? " border-emerald-500 bg-emerald-600 text-white"
+              : " border-emerald-300 bg-emerald-50 text-emerald-700";
+          } else {
+            cardClasses += " border-slate-200 bg-white text-slate-600";
+          }
+
+          return (
+            <div key={`sentence-${idx}`} className={cardClasses}>
+              <div className="text-xs font-semibold uppercase tracking-wide">{title}</div>
+              <div className="mt-2 text-sm leading-relaxed text-slate-700">{sentence.text}</div>
+            </div>
+          );
+        })}
+      </div>
+    );
+
+    const wordGrid = navigatorOptions.length > 0 ? (
+      <div
+        className="grid gap-3"
+        style={{
+          gridTemplateColumns: `repeat(${Math.max(
+            1,
+            Math.min(columns, navigatorOptions.length)
+          )}, minmax(0, 1fr))`,
+        }}
+      >
+        {navigatorOptions.map((word, idx) => {
+          const optionIndex = sentenceSuggestions.length + idx;
+          const isActive = optionIndex === currentWordIndex;
+          const normalized = word.trim().toLowerCase();
+          const isInformational = [
+            "loading responses...",
+            "no suggestions available",
+            "unable to load responses",
+          ].includes(normalized);
+
+          let cardClasses =
+            "rounded-xl border px-4 py-5 text-center text-sm font-medium shadow-sm transition-colors";
+          if (isInformational) {
+            cardClasses += " border-slate-200 bg-slate-50 text-slate-400";
+          } else if (isActive) {
+            cardClasses += isSelectActive
+              ? " border-emerald-400 bg-emerald-50 text-emerald-700"
+              : " border-slate-300 bg-slate-100 text-slate-900";
+          } else {
+            cardClasses += " border-slate-100 bg-white text-slate-500";
+          }
+
+          return (
+            <div key={`word-${word}-${idx}`} className={cardClasses}>
+              {word}
+            </div>
+          );
+        })}
+
+        {trimmedResponse && (
+          <div
+            key="submit"
+            className={`rounded-xl border px-4 py-4 text-center text-sm font-semibold shadow-sm transition-colors ${
+              currentWordIndex === gridOptions.length - 1
+                ? isSubmitPressed || isSelectActive
+                  ? "border-emerald-600 bg-emerald-600 text-white"
+                  : "border-emerald-400 bg-emerald-50 text-emerald-700"
+                : "border-slate-200 bg-white text-emerald-600"
+            }`}
+            style={{
+              gridColumn: `1 / span ${Math.max(
+                1,
+                Math.min(columns, navigatorOptions.length || 1)
+              )}`,
+            }}
+          >
+            Submit Response
+          </div>
+        )}
+      </div>
+    ) : (
+      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">
+        No suggestions available yet.
+      </div>
+    );
+
+    return (
+      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Word Navigator</h2>
+            <p className="text-sm text-slate-600">
+              Highlight “Start Typing” to fetch responses, then use Select to build your reply word by word.
+            </p>
+          </div>
+          {isLoadingSuggestions ? (
+            <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+              Loading…
+            </span>
+          ) : null}
+        </div>
+
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">My Response</div>
+          <div className="mt-2 min-h-[52px] rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap">
+            {responseWords.length > 0 ? (
+              <span>{responseText}</span>
+            ) : (
+              <span className="text-slate-400">No words selected yet.</span>
+            )}
+          </div>
+        </div>
+
+        {sentenceSuggestions.length > 0 && sentenceCards}
+        {wordGrid}
+      </div>
+    );
+  };
+
   const header = (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -786,26 +1003,47 @@ export default function FaceLandmarkerApp() {
             <button onClick={stop} className="inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl shadow">
               <Pause className="w-4 h-4" /> Stop
             </button>
-          )}
-          
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
-            <Activity className="w-5 h-5" />
-            <span className="font-medium">Status</span>
+        )}
+        
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+          <Activity className="w-5 h-5" />
+          <span className="font-medium">Status</span>
             <span className={`px-3 py-1 rounded-full text-xs font-semibold ${isRunning ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
               {isRunning ? "Running" : "Stopped"}
             </span>
           </div>
-          
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
-            <Camera className="w-5 h-5" />
-            <span className="font-medium">FPS</span>
-            <span className="font-mono text-sm">{fps}</span>
-          </div>
+        
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+          <Camera className="w-5 h-5" />
+          <span className="font-medium">FPS</span>
+          <span className="font-mono text-sm">{fps}</span>
         </div>
 
-        {/* Main Layout */}
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] items-start">
-          <div className="space-y-4">
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm min-h-[56px]">
+          <Cpu className="w-5 h-5" />
+          <div className="flex flex-col gap-1">
+            <span className="font-medium leading-none">Gestures</span>
+            <div className="flex flex-wrap items-center gap-1">
+              {activeGestures.length === 0 ? (
+                <span className="text-xs text-slate-400">None</span>
+              ) : (
+                activeGestures.map((gesture) => (
+                  <span
+                    key={gesture}
+                    className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700"
+                  >
+                    {gesture}
+                  </span>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Layout */}
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)] items-start">
+          <div className="space-y-6">
             <div
               ref={videoContainerRef}
               className="relative w-full max-w-[720px] aspect-video rounded-2xl overflow-hidden border border-slate-200 bg-black"
@@ -835,25 +1073,8 @@ export default function FaceLandmarkerApp() {
             {loadingMsg && !isReady && (
               <div className="text-sm text-slate-600">{loadingMsg}</div>
             )}
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
-              <h3 className="text-sm font-semibold mb-2">Active Gestures</h3>
-              {activeGestures.length === 0 ? (
-                <span className="text-slate-400 text-sm">None</span>
-              ) : (
-                <div className="flex gap-2 flex-wrap">
-                  {activeGestures.map((g) => (
-                    <span key={g} className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
-                      {g}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-6">
             {isSpeechSupported ? (
-              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-3 min-h-[160px]">
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-slate-500">
                   <span
                     className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isTranscribing && isRunning ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
@@ -878,121 +1099,9 @@ export default function FaceLandmarkerApp() {
                 Live transcription is not supported in this browser. Safari 16+ on macOS/iOS should support it when microphone access is allowed.
               </div>
             )}
-
-            <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold">Word Navigator</h2>
-                  <p className="text-sm text-slate-600">Highlight “Start Typing” to fetch responses, then use Select to build your reply word by word.</p>
-                </div>
-                {isLoadingSuggestions ? (
-                  <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                    Loading…
-                  </span>
-                ) : null}
-              </div>
-
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">My Response</div>
-                <div className="mt-2 min-h-[52px] rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap">
-                  {responseWords.length > 0 ? (
-                    <span>{responseText}</span>
-                  ) : (
-                    <span className="text-slate-400">No words selected yet.</span>
-                  )}
-                </div>
-              </div>
-
-              {navigatorOptions.length > 0 ? (
-                <div
-                  className="grid gap-3"
-                  style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(columns, navigatorOptions.length))}, minmax(0, 1fr))` }}
-                >
-                  {gridOptions.map((option, index) => {
-                    const isActive = index === currentWordIndex;
-                    const hasResponse = Boolean(trimmedResponse);
-
-                    let itemClasses = "rounded-xl border px-4 py-5 text-sm font-medium shadow-sm transition-colors";
-                    let content: React.ReactNode = null;
-                    let spanStyle: React.CSSProperties | undefined;
-
-                    if (option.type === "sentence") {
-                      const title = option.style ? option.style.charAt(0).toUpperCase() + option.style.slice(1) : "";
-                      if (isActive) {
-                        itemClasses += isSelectActive
-                          ? " border-emerald-400 bg-emerald-50 text-emerald-700"
-                          : " border-slate-300 bg-slate-100 text-slate-900";
-                      } else {
-                        itemClasses += " border-slate-200 bg-white text-slate-600";
-                      }
-                      spanStyle = { gridColumn: `1 / span ${Math.max(1, Math.min(columns, navigatorOptions.length || 1))}` };
-                      content = (
-                        <div className="text-left">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600">{title}</div>
-                          <div className="mt-2 text-sm leading-relaxed text-slate-700">{option.text}</div>
-                        </div>
-                      );
-                    } else if (option.type === "submit") {
-                      if (!hasResponse) {
-                        itemClasses += " border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed";
-                      } else if (isActive) {
-                        if (isSubmitPressed || isSelectActive) {
-                          itemClasses += " border-emerald-600 bg-emerald-600 text-white";
-                        } else {
-                          itemClasses += " border-emerald-400 bg-emerald-50 text-emerald-700";
-                        }
-                        itemClasses += " cursor-pointer";
-                      } else {
-                        itemClasses += " border-slate-200 bg-white text-emerald-600 cursor-pointer";
-                      }
-                      spanStyle = { gridColumn: `1 / span ${Math.max(1, Math.min(columns, navigatorOptions.length || 1))}` };
-                      content = <span className="text-center w-full block">{option.label}</span>;
-                    } else {
-                      const normalized = option.label.trim().toLowerCase();
-                      const isInformational = [
-                        "loading responses...",
-                        "no suggestions available",
-                        "unable to load responses",
-                      ].includes(normalized);
-
-                      if (isInformational) {
-                        itemClasses += " border-slate-200 bg-slate-50 text-slate-400";
-                      } else if (isActive) {
-                        itemClasses += isSelectActive
-                          ? " border-emerald-400 bg-emerald-50 text-emerald-700"
-                          : " border-slate-300 bg-slate-100 text-slate-900";
-                      } else {
-                        itemClasses += " border-slate-100 bg-white text-slate-500";
-                      }
-                      itemClasses += " text-center";
-                      content = option.label;
-                    }
-
-                    const key =
-                      option.type === "sentence"
-                        ? `sentence-${index}`
-                        : option.type === "submit"
-                        ? `submit-${index}`
-                        : `word-${option.label}-${index}`;
-
-                    return (
-                      <div
-                        key={key}
-                        className={`${itemClasses} ${option.type === "submit" ? "py-4 text-center" : ""}`.trim()}
-                        style={spanStyle}
-                      >
-                        {content}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">
-                  No suggestions available yet.
-                </div>
-              )}
-            </div>
           </div>
+
+          {renderWordNavigator()}
         </div>
 
         {/* Footer */}
