@@ -1860,45 +1860,21 @@ export default function FaceLandmarkerApp() {
             <span className="font-mono text-sm">{fps}</span>
           </div>
 
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm min-h-[56px]">
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
             <Cpu className="w-5 h-5" />
-            <div className="flex flex-col gap-1 w-full">
-              <div className="flex items-center gap-2">
-                <span className="font-medium leading-none">Gestures</span>
-                {isDeveloperMode && (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
-                    DEV MODE: Click to test
-                  </span>
-                )}
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1 min-h-[26px]">
-                {gestureNames.map((name) => {
-                  const isActive = activeGestures.includes(name);
-                  const baseClasses = "text-xs px-2 py-0.5 rounded-full border text-center transition-colors";
-                  const stateClasses = isActive
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                    : "border-slate-200 bg-slate-100 text-slate-500";
-                  const interactiveClasses = isDeveloperMode
-                    ? "cursor-pointer hover:bg-emerald-100 hover:border-emerald-300 hover:text-emerald-700"
-                    : "";
-                  
-                  return isDeveloperMode ? (
-                    <button
-                      key={name}
-                      className={`${baseClasses} ${stateClasses} ${interactiveClasses}`}
-                      onClick={() => simulateGesture(name)}
-                      title={`Click to simulate ${name} gesture`}
-                    >
-                      {name}
-                    </button>
-                  ) : (
-                    <span key={name} className={`${baseClasses} ${stateClasses}`}>
-                      {name}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
+            <span className="font-medium">Gesture</span>
+            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+              activeGestures.length > 0 
+                ? "bg-emerald-50 text-emerald-700" 
+                : "bg-slate-50 text-slate-500"
+            }`}>
+              {activeGestures.length > 0 ? activeGestures[0] : "None"}
+            </span>
+            {isDeveloperMode && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium ml-auto">
+                DEV MODE
+              </span>
+            )}
           </div>
         </div>
 
@@ -2025,23 +2001,44 @@ export default function FaceLandmarkerApp() {
                 <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Advanced
                 </summary>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm">
-                  <div className="flex items-center gap-2">
-                    <Cpu className="h-4 w-4 text-slate-400" />
-                    <span className="font-medium text-slate-600">Developer mode</span>
-                    <span className="text-xs text-slate-400">Keyboard testing helpers</span>
+                <div className="mt-3 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="h-4 w-4 text-slate-400" />
+                      <span className="font-medium text-slate-600">Developer mode</span>
+                      <span className="text-xs text-slate-400">Keyboard testing helpers</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsDeveloperMode((prev) => !prev)}
+                      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                        isDeveloperMode
+                          ? "border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-purple-300 hover:text-purple-700"
+                      }`}
+                    >
+                      {isDeveloperMode ? "Disable" : "Enable"}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsDeveloperMode((prev) => !prev)}
-                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                      isDeveloperMode
-                        ? "border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
-                        : "border-slate-200 bg-white text-slate-600 hover:border-purple-300 hover:text-purple-700"
-                    }`}
-                  >
-                    {isDeveloperMode ? "Disable" : "Enable"}
-                  </button>
+                  {isDeveloperMode && (
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="font-medium text-slate-600">Test Gestures</span>
+                        <span className="text-xs text-slate-400">Click to simulate</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {gestureNames.map((name) => (
+                          <button
+                            key={name}
+                            onClick={() => simulateGesture(name)}
+                            className="text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:text-emerald-700 transition-colors"
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </details>
             </motion.div>
