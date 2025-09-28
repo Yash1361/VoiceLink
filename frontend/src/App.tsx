@@ -468,7 +468,7 @@ export default function FaceLandmarkerApp() {
           <div className="space-y-4">
             <div
               ref={videoContainerRef}
-              className="relative aspect-video rounded-2xl overflow-hidden border border-slate-200 bg-black"
+              className="relative w-full max-w-[720px] mx-auto aspect-video rounded-2xl overflow-hidden border border-slate-200 bg-black"
               style={{ aspectRatio: videoAspectRatio ?? undefined }}
             >
               <video
