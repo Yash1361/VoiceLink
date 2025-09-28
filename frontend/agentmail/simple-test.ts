@@ -43,7 +43,7 @@ const rl = createInterface({
   output: process.stdout
 });
 
-const messages = [
+const messages: Array<{ role: string; content: string }> = [
 //   {
 //     role: "system",
 //     content: "You are an email assistant. Help users manage their emails using the available tools. Be helpful and use the appropriate tools based on user requests."

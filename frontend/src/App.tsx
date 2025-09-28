@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion";
 import { Camera, CameraOff, Sparkles, Activity, Play, Pause, X, Cpu } from "lucide-react";
 import { useBlendshapeGestures } from "./hooks/useGesture";
+import Keyboard, { LETTERS, SPECIAL_KEYS } from "./components/keyboard";
 
 
 // MediaPipe Tasks (loaded at runtime from CDN)
@@ -79,6 +80,101 @@ type NavigatorGridOption =
   | { type: "word"; label: string }
   | { type: "submit"; label: "Submit Response" }
   | KeyboardGridOption;
+
+type AgentId = "agentmail" | "duckduckgo";
+
+type AgentOption = {
+  id: AgentId;
+  label: string;
+  description: string;
+};
+
+type AgentMailActivity = {
+  id: string;
+  timestamp: string;
+  message: string;
+  tone: "info" | "warning";
+};
+
+type AgentMailPreview = {
+  id: string;
+  subject: string;
+  from: string;
+  preview: string;
+  received: string;
+};
+
+type DuckResult = {
+  title: string;
+  url: string;
+  snippet: string;
+};
+
+const AGENT_OPTIONS: AgentOption[] = [
+  {
+    id: "agentmail",
+    label: "AgentMail",
+    description: "Compose quick emails or review recent inbox activity without leaving the experience.",
+  },
+  {
+    id: "duckduckgo",
+    label: "DuckDuckGo Agent",
+    description: "Run lightweight searches and review summarized answers from the sample agent output.",
+  },
+];
+
+const DEFAULT_AGENT_ID: AgentId = AGENT_OPTIONS[0].id;
+
+const SAMPLE_AGENTMAIL_INBOX: AgentMailPreview[] = [
+  {
+    id: "sample-1",
+    subject: "Status update: VoiceLink live demo",
+    from: "product@voicelink.ai",
+    preview: "Sharing the highlights and next steps coming out of today's review.",
+    received: "Today · 9:18 AM",
+  },
+  {
+    id: "sample-2",
+    subject: "PT session confirmation",
+    from: "therapies@rehabpartners.com",
+    preview: "Looking forward to Thursday at 2:30 PM. Reply to reschedule.",
+    received: "Yesterday · 4:02 PM",
+  },
+  {
+    id: "sample-3",
+    subject: "Community volunteers meetup",
+    from: "hello@neighborscollective.org",
+    preview: "The next meetup is this Saturday. Let us know if you'll join in person or virtually.",
+    received: "Tue · 6:41 PM",
+  },
+];
+
+const DEFAULT_DDG_RESULTS: DuckResult[] = [
+  {
+    title: "Artificial intelligence",
+    url: "https://en.wikipedia.org/wiki/Artificial_intelligence",
+    snippet:
+      "Artificial intelligence covers methods that let computers learn, reason, and solve problems with human-like adaptability.",
+  },
+  {
+    title: "Association for the Advancement of Artificial Intelligence",
+    url: "https://duckduckgo.com/Association_for_the_Advancement_of_Artificial_Intelligence",
+    snippet: "AAAI advances research and responsible practice across the AI community with conferences and publications.",
+  },
+  {
+    title: "Organoid intelligence",
+    url: "https://duckduckgo.com/Organoid_intelligence",
+    snippet: "Organoid intelligence explores brain-cell-based computing models to push beyond silicon limitations.",
+  },
+  {
+    title: "Computational neuroscience",
+    url: "https://duckduckgo.com/c/Computational_neuroscience",
+    snippet: "Computational neuroscience blends biology and modeling to understand the brain's information processing.",
+  },
+];
+
+const DEFAULT_DDG_SUMMARY =
+  "Use the DuckDuckGo agent to explore concise, privacy-friendly search summaries. Select a card to focus on a result.";
 
 const KEYBOARD_LAYOUT: Array<
   Array<{
@@ -275,6 +371,22 @@ export default function FaceLandmarkerApp() {
   );
   const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([]);
 
+  const agentOptions = AGENT_OPTIONS;
+  const [isAgentPopupOpen, setIsAgentPopupOpen] = useState(false);
+  const [isAgentSelectionView, setIsAgentSelectionView] = useState(true);
+  const [agentCurrentIndex, setAgentCurrentIndex] = useState(0);
+  const [activeAgent, setActiveAgent] = useState<AgentId>(DEFAULT_AGENT_ID);
+  const [agentMailDraft, setAgentMailDraft] = useState({ to: "", subject: "", body: "" });
+  const [agentMailActivity, setAgentMailActivity] = useState<AgentMailActivity[]>([]);
+  const [agentMailFocusIndex, setAgentMailFocusIndex] = useState(0);
+  const [duckSearchQuery, setDuckSearchQuery] = useState("AI");
+  const [duckSearchResults, setDuckSearchResults] = useState<DuckResult[]>(DEFAULT_DDG_RESULTS);
+  const [duckSummary, setDuckSummary] = useState(DEFAULT_DDG_SUMMARY);
+  const [duckFocusIndex, setDuckFocusIndex] = useState(0);
+  const [agentKeyboardValue, setAgentKeyboardValue] = useState("");
+  const [isAgentKeyboardOpen, setIsAgentKeyboardOpen] = useState(false);
+  const [agentKeyboardSelection, setAgentKeyboardSelection] = useState(0);
+
   const columns = Math.min(3, Math.max(1, navigatorOptions.length));
   const handleKeyboardToggle = useCallback(() => {
     const now = Date.now();
@@ -377,7 +489,11 @@ export default function FaceLandmarkerApp() {
   const prevActiveGesturesRef = useRef<string[]>([]);
   const submitFlashTimeoutRef = useRef<number | null>(null);
   const keyboardToggleCooldownRef = useRef<number>(0);
+<<<<<<< HEAD
   const suggestionRequestIdRef = useRef(0);
+=======
+  const agentPopupCooldownRef = useRef<number>(0);
+>>>>>>> 4ac8f29 (add agent launcher)
   const responseText = useMemo(() => {
     const parts = [...responseWords];
     if (typedBuffer) {
@@ -536,6 +652,519 @@ export default function FaceLandmarkerApp() {
     [isKeyboardOpen, keyboardOptions, navigatorOptions, sentenceSuggestions, trimmedResponse]
   );
 
+  const agentMailFocusOrder = useMemo(() => ["to", "subject", "body", "send"] as const, []);
+  const duckFocusOrder = useMemo(() => ["query", "run", "reset"] as const, []);
+
+  const agentKeyboardSuggestions = useMemo(() => {
+    if (isAgentSelectionView) {
+      return [] as string[];
+    }
+    if (activeAgent === "agentmail") {
+      const focus = agentMailFocusOrder[agentMailFocusIndex];
+      if (focus === "to") {
+        return [
+          "care@voicelink.ai",
+          "support@example.com",
+          "teammate@agentmail.to",
+        ];
+      }
+      if (focus === "subject") {
+        return [
+          "Quick follow-up",
+          "Thanks for the update",
+          "Scheduling next steps",
+        ];
+      }
+      if (focus === "body") {
+        return [
+          "Appreciate the detailed notes—I'll circle back shortly.",
+          "Let's connect later today to review the summary.",
+          "Thanks! I can confirm and move ahead from here.",
+        ];
+      }
+    }
+    if (activeAgent === "duckduckgo") {
+      const focus = duckFocusOrder[duckFocusIndex];
+      if (focus === "query") {
+        return [
+          "artificial intelligence",
+          "computational neuroscience",
+          "privacy-first search engines",
+        ];
+      }
+    }
+    return [] as string[];
+  }, [
+    activeAgent,
+    agentMailFocusIndex,
+    agentMailFocusOrder,
+    duckFocusIndex,
+    duckFocusOrder,
+    isAgentSelectionView,
+  ]);
+
+  const totalAgentKeyboardOptions = agentKeyboardSuggestions.length + LETTERS.length + SPECIAL_KEYS.length;
+
+  useEffect(() => {
+    if (!isAgentKeyboardOpen) {
+      return;
+    }
+    setAgentKeyboardSelection((current) => {
+      if (totalAgentKeyboardOptions <= 0) {
+        return 0;
+      }
+      return Math.min(current, totalAgentKeyboardOptions - 1);
+    });
+  }, [isAgentKeyboardOpen, totalAgentKeyboardOptions]);
+
+  const applyAgentMailValue = useCallback(
+    (field: "to" | "subject" | "body", value: string) => {
+      setAgentMailDraft((draft) => ({ ...draft, [field]: value }));
+      if (activeAgent === "agentmail") {
+        setAgentKeyboardValue(value);
+      }
+    },
+    [activeAgent]
+  );
+
+  const handleAgentSuggestionClick = useCallback(
+    (word: string) => {
+      if (isAgentSelectionView) {
+        return;
+      }
+      if (activeAgent === "agentmail") {
+        const focus = agentMailFocusOrder[agentMailFocusIndex];
+        if (focus === "to" || focus === "subject" || focus === "body") {
+          applyAgentMailValue(focus, word);
+        }
+        return;
+      }
+      if (activeAgent === "duckduckgo") {
+        const focus = duckFocusOrder[duckFocusIndex];
+        if (focus === "query") {
+          setDuckSearchQuery(word);
+          setAgentKeyboardValue(word);
+        }
+      }
+    },
+    [
+      activeAgent,
+      agentMailFocusIndex,
+      agentMailFocusOrder,
+      applyAgentMailValue,
+      duckFocusIndex,
+      duckFocusOrder,
+      isAgentSelectionView,
+    ]
+  );
+
+  const handleAgentPopupToggle = useCallback(() => {
+    const now = Date.now();
+    if (now - agentPopupCooldownRef.current < 400) {
+      return;
+    }
+    agentPopupCooldownRef.current = now;
+    setIsAgentPopupOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setIsAgentSelectionView(true);
+        const activeIndex = agentOptions.findIndex((option) => option.id === activeAgent);
+        setAgentCurrentIndex(activeIndex >= 0 ? activeIndex : 0);
+        setAgentMailFocusIndex(0);
+        setDuckFocusIndex(0);
+        setAgentKeyboardValue("");
+        setIsAgentKeyboardOpen(false);
+        setAgentKeyboardSelection(0);
+      }
+      if (!next) {
+        setIsAgentSelectionView(true);
+        setAgentKeyboardValue("");
+        setIsAgentKeyboardOpen(false);
+        setAgentKeyboardSelection(0);
+      }
+      return next;
+    });
+  }, [activeAgent, agentOptions]);
+
+  const closeAgentPopup = useCallback(() => {
+    agentPopupCooldownRef.current = Date.now();
+    setIsAgentPopupOpen(false);
+    setIsAgentSelectionView(true);
+    setAgentMailFocusIndex(0);
+    setDuckFocusIndex(0);
+    setAgentKeyboardValue("");
+    setIsAgentKeyboardOpen(false);
+    setAgentKeyboardSelection(0);
+  }, []);
+
+  const handleAgentKeyboardToggle = useCallback(() => {
+    if (isAgentSelectionView) {
+      return;
+    }
+    setIsAgentKeyboardOpen((prev) => {
+      const next = !prev;
+      setAgentKeyboardSelection(0);
+      return next;
+    });
+  }, [isAgentSelectionView]);
+
+  const handleAgentNavigation = useCallback(
+    (direction: "Left" | "Right" | "Up" | "Down") => {
+      if (isAgentSelectionView) {
+        if (agentOptions.length === 0) return;
+        const step = direction === "Left" || direction === "Up" ? -1 : 1;
+        setAgentCurrentIndex((current) => {
+          const total = agentOptions.length;
+          const next = (current + step + total) % total;
+          return next;
+        });
+        return;
+      }
+
+      if (activeAgent === "agentmail") {
+        const step = direction === "Left" || direction === "Up" ? -1 : 1;
+        setAgentMailFocusIndex((current) => {
+          const total = agentMailFocusOrder.length;
+          const next = (current + step + total) % total;
+          const focus = agentMailFocusOrder[next];
+          if (focus === "to" || focus === "subject" || focus === "body") {
+            setAgentKeyboardValue(agentMailDraft[focus]);
+          } else {
+            setAgentKeyboardValue("");
+          }
+          return next;
+        });
+        return;
+      }
+
+      if (activeAgent === "duckduckgo") {
+        const step = direction === "Left" || direction === "Up" ? -1 : 1;
+        setDuckFocusIndex((current) => {
+          const total = duckFocusOrder.length;
+          const next = (current + step + total) % total;
+          const focus = duckFocusOrder[next];
+          if (focus === "query") {
+            setAgentKeyboardValue(duckSearchQuery);
+          } else {
+            setAgentKeyboardValue("");
+          }
+          return next;
+        });
+      }
+    },
+    [
+      activeAgent,
+      agentMailDraft,
+      agentMailFocusOrder,
+      agentOptions.length,
+      duckFocusOrder,
+      duckSearchQuery,
+      isAgentSelectionView,
+    ]
+  );
+
+  const handleAgentMailSend = useCallback(() => {
+    const trimmedTo = agentMailDraft.to.trim();
+    const trimmedSubject = agentMailDraft.subject.trim();
+    const trimmedBody = agentMailDraft.body.trim();
+    const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+    if (!trimmedTo || !trimmedSubject || !trimmedBody) {
+      setAgentMailActivity((current) => {
+        const entry: AgentMailActivity = {
+          id: `warn-${Date.now()}`,
+          timestamp,
+          message: "Fill in all fields to simulate sending an email.",
+          tone: "warning",
+        };
+        return [entry, ...current].slice(0, 6);
+      });
+      return;
+    }
+
+    setAgentMailActivity((current) => {
+      const entry: AgentMailActivity = {
+        id: `info-${Date.now()}`,
+        timestamp,
+        message: `Queued email to ${trimmedTo} with subject "${trimmedSubject}" (simulation).`,
+        tone: "info",
+      };
+      return [entry, ...current].slice(0, 6);
+    });
+    setAgentMailDraft({ to: "", subject: "", body: "" });
+    if (activeAgent === "agentmail") {
+      setAgentMailFocusIndex(0);
+      setAgentKeyboardValue("");
+    }
+  }, [activeAgent, agentMailDraft]);
+
+  const handleDuckSearch = useCallback(
+    (event?: React.FormEvent<HTMLFormElement>) => {
+      event?.preventDefault();
+      const query = duckSearchQuery.trim();
+      if (!query) {
+        setDuckSearchResults(DEFAULT_DDG_RESULTS);
+        setDuckSummary(DEFAULT_DDG_SUMMARY);
+        return;
+      }
+
+      const normalized = query.toLowerCase();
+      const matches = DEFAULT_DDG_RESULTS.filter(
+        (result) =>
+          result.title.toLowerCase().includes(normalized) ||
+          result.snippet.toLowerCase().includes(normalized)
+      );
+
+      if (matches.length) {
+        setDuckSearchResults(matches);
+        setDuckSummary(`Top results for “${query}”`);
+      } else {
+        setDuckSearchResults(DEFAULT_DDG_RESULTS);
+        setDuckSummary("No direct match. Showing highlighted DuckDuckGo snippets instead.");
+      }
+    },
+    [duckSearchQuery]
+  );
+
+  const handleDuckReset = useCallback(() => {
+    setDuckSearchQuery("AI");
+    setDuckSearchResults(DEFAULT_DDG_RESULTS);
+    setDuckSummary(DEFAULT_DDG_SUMMARY);
+    if (!isAgentSelectionView && activeAgent === "duckduckgo") {
+      setDuckFocusIndex(0);
+      setAgentKeyboardValue("AI");
+    }
+  }, [activeAgent, isAgentSelectionView]);
+
+  const handleAgentSelectConfirm = useCallback(() => {
+    if (isAgentSelectionView) {
+      const option = agentOptions[agentCurrentIndex];
+      if (!option) return;
+      setActiveAgent(option.id);
+      setIsAgentSelectionView(false);
+      if (option.id === "agentmail") {
+        setAgentMailFocusIndex(0);
+        setAgentKeyboardValue(agentMailDraft.to);
+      } else {
+        setDuckFocusIndex(0);
+        setAgentKeyboardValue(duckSearchQuery);
+        setDuckSummary(DEFAULT_DDG_SUMMARY);
+      }
+      return;
+    }
+
+    if (activeAgent === "agentmail") {
+      const focus = agentMailFocusOrder[agentMailFocusIndex];
+      if (focus === "send") {
+        handleAgentMailSend();
+        return;
+      }
+      const nextIndex = (agentMailFocusIndex + 1) % agentMailFocusOrder.length;
+      setAgentMailFocusIndex(nextIndex);
+      const nextFocus = agentMailFocusOrder[nextIndex];
+      if (nextFocus === "to" || nextFocus === "subject" || nextFocus === "body") {
+        setAgentKeyboardValue(agentMailDraft[nextFocus]);
+      } else {
+        setAgentKeyboardValue("");
+      }
+      return;
+    }
+
+    if (activeAgent === "duckduckgo") {
+      const focus = duckFocusOrder[duckFocusIndex];
+      if (focus === "run") {
+        handleDuckSearch();
+        return;
+      }
+      if (focus === "reset") {
+        handleDuckReset();
+        return;
+      }
+      const nextIndex = (duckFocusIndex + 1) % duckFocusOrder.length;
+      setDuckFocusIndex(nextIndex);
+      const nextFocus = duckFocusOrder[nextIndex];
+      if (nextFocus === "query") {
+        setAgentKeyboardValue(duckSearchQuery);
+      } else {
+        setAgentKeyboardValue("");
+      }
+    }
+  }, [
+    activeAgent,
+    agentCurrentIndex,
+    agentMailDraft,
+    agentMailFocusIndex,
+    agentMailFocusOrder,
+    agentOptions,
+    duckFocusIndex,
+    duckFocusOrder,
+    duckSearchQuery,
+    handleAgentMailSend,
+    handleDuckReset,
+    handleDuckSearch,
+    isAgentSelectionView,
+  ]);
+
+  const handleAgentMailDraftChange = useCallback(
+    (field: "to" | "subject" | "body", value: string) => {
+      setAgentMailDraft((draft) => ({ ...draft, [field]: value }));
+      if (!isAgentSelectionView && activeAgent === "agentmail") {
+        const focus = agentMailFocusOrder[agentMailFocusIndex];
+        if (focus === field) {
+          setAgentKeyboardValue(value);
+        }
+      }
+    },
+    [activeAgent, agentMailFocusIndex, agentMailFocusOrder, isAgentSelectionView]
+  );
+
+  const handleDuckResultSelect = useCallback((result: DuckResult) => {
+    setDuckSummary(result.snippet);
+  }, []);
+
+  const focusAgentMailField = useCallback(
+    (field: "to" | "subject" | "body" | "send") => {
+      const index = agentMailFocusOrder.indexOf(field);
+      if (index === -1) return;
+      setAgentMailFocusIndex(index);
+      if (field === "to" || field === "subject" || field === "body") {
+        setAgentKeyboardValue(agentMailDraft[field]);
+      } else {
+        setAgentKeyboardValue("");
+      }
+    },
+    [agentMailDraft, agentMailFocusOrder]
+  );
+
+  const focusDuckSection = useCallback(
+    (section: "query" | "run" | "reset") => {
+      const index = duckFocusOrder.indexOf(section);
+      if (index === -1) return;
+      setDuckFocusIndex(index);
+      if (section === "query") {
+        setAgentKeyboardValue(duckSearchQuery);
+      } else {
+        setAgentKeyboardValue("");
+      }
+    },
+    [duckFocusOrder, duckSearchQuery]
+  );
+
+  const handleAgentKeyboardPress = useCallback(
+    (key: string) => {
+      if (isAgentSelectionView) {
+        return;
+      }
+
+      if (activeAgent === "agentmail") {
+        const focus = agentMailFocusOrder[agentMailFocusIndex];
+        if (focus !== "to" && focus !== "subject" && focus !== "body") {
+          if (key === "Enter") {
+            handleAgentMailSend();
+          }
+          return;
+        }
+        const currentValue = agentMailDraft[focus];
+        let nextValue = currentValue;
+        if (key === "Backspace") {
+          nextValue = currentValue.slice(0, -1);
+        } else if (key === "Space") {
+          nextValue = `${currentValue} `;
+        } else if (key === "Enter") {
+          handleAgentMailSend();
+          return;
+        } else if (key.length === 1) {
+          nextValue = `${currentValue}${key.toLowerCase()}`;
+        }
+        applyAgentMailValue(focus, nextValue);
+        return;
+      }
+
+      if (activeAgent === "duckduckgo") {
+        const focus = duckFocusOrder[duckFocusIndex];
+        if (focus !== "query") {
+          if (key === "Enter") {
+            if (focus === "run") {
+              handleDuckSearch();
+            } else if (focus === "reset") {
+              handleDuckReset();
+            }
+          }
+          return;
+        }
+        const currentValue = duckSearchQuery;
+        let nextValue = currentValue;
+        if (key === "Backspace") {
+          nextValue = currentValue.slice(0, -1);
+        } else if (key === "Space") {
+          nextValue = `${currentValue} `;
+        } else if (key === "Enter") {
+          handleDuckSearch();
+          return;
+        } else if (key.length === 1) {
+          nextValue = `${currentValue}${key.toLowerCase()}`;
+        }
+        setDuckSearchQuery(nextValue);
+        setAgentKeyboardValue(nextValue);
+      }
+    },
+    [
+      activeAgent,
+      agentMailDraft,
+      agentMailFocusIndex,
+      agentMailFocusOrder,
+      applyAgentMailValue,
+      duckFocusIndex,
+      duckFocusOrder,
+      duckSearchQuery,
+      handleAgentMailSend,
+      handleDuckReset,
+      handleDuckSearch,
+      isAgentSelectionView,
+    ]
+  );
+
+  useEffect(() => {
+    if (!isAgentPopupOpen) {
+      return;
+    }
+    const activeIndex = agentOptions.findIndex((option) => option.id === activeAgent);
+    if (activeIndex >= 0) {
+      setAgentCurrentIndex(activeIndex);
+    }
+  }, [activeAgent, agentOptions, isAgentPopupOpen]);
+
+  useEffect(() => {
+    if (!isAgentPopupOpen || isAgentSelectionView) {
+      return;
+    }
+    if (activeAgent === "agentmail") {
+      const focus = agentMailFocusOrder[agentMailFocusIndex];
+      if (focus === "to" || focus === "subject" || focus === "body") {
+        setAgentKeyboardValue(agentMailDraft[focus]);
+      } else {
+        setAgentKeyboardValue("");
+      }
+    } else if (activeAgent === "duckduckgo") {
+      const focus = duckFocusOrder[duckFocusIndex];
+      if (focus === "query") {
+        setAgentKeyboardValue(duckSearchQuery);
+      } else {
+        setAgentKeyboardValue("");
+      }
+    }
+  }, [
+    activeAgent,
+    agentMailDraft,
+    agentMailFocusIndex,
+    agentMailFocusOrder,
+    duckFocusIndex,
+    duckFocusOrder,
+    duckSearchQuery,
+    isAgentPopupOpen,
+    isAgentSelectionView,
+  ]);
+
   const resetNavigator = useCallback(() => {
     setNavigatorOptions(["Start Typing"]);
     setResponseWords([]);
@@ -611,7 +1240,7 @@ export default function FaceLandmarkerApp() {
       { name: "eyeBlinkRight", threshold: 0.3, comparison: "<" as const },
     ],
     framesRequired: 1,
-    onActivate: () => console.log("😉 Left Wink detected!"),
+    onActivate: handleAgentPopupToggle,
   },
   {
     name: "Right Wink",
@@ -620,9 +1249,9 @@ export default function FaceLandmarkerApp() {
       { name: "eyeBlinkLeft", threshold: 0.3, comparison: "<" as const },
     ],
     framesRequired: 1,
-    onActivate: () => console.log("😉 Right Wink detected!"),
+    onActivate: closeAgentPopup,
   },
-], [handleKeyboardToggle]);
+], [closeAgentPopup, handleAgentPopupToggle, handleKeyboardToggle]);
   const gestureNames = useMemo(() => gestures.map((gesture) => gesture.name), [gestures]);
 
   const activeGestures = useBlendshapeGestures(blendShapes, gestures);
@@ -1055,6 +1684,333 @@ export default function FaceLandmarkerApp() {
     }
   }, []);
 
+  const renderAgentMailPanel = () => {
+    const focus = agentMailFocusOrder[agentMailFocusIndex];
+    const fieldClasses = (field: "to" | "subject" | "body") =>
+      `mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-800 shadow-inner focus:outline-none focus:ring-2 ${
+        focus === field
+          ? "border-emerald-400 focus:border-emerald-400 focus:ring-emerald-100"
+          : "border-slate-200 focus:border-emerald-200 focus:ring-emerald-50"
+      }`;
+    const sendButtonClasses =
+      focus === "send"
+        ? "inline-flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm"
+        : "inline-flex items-center justify-center rounded-lg border border-transparent bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700";
+
+    return (
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Compose preview</h3>
+            <p className="text-sm text-slate-600">This form simulates the AgentMail workflow locally—no email is actually sent.</p>
+          </div>
+          <label className="block text-sm">
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">To</span>
+            <input
+              className={fieldClasses("to")}
+              placeholder="recipient@example.com"
+              value={agentMailDraft.to}
+              onChange={(event) => handleAgentMailDraftChange("to", event.target.value)}
+              onFocus={() => focusAgentMailField("to")}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Subject</span>
+            <input
+              className={fieldClasses("subject")}
+              placeholder="Quick update from VoiceLink"
+              value={agentMailDraft.subject}
+              onChange={(event) => handleAgentMailDraftChange("subject", event.target.value)}
+              onFocus={() => focusAgentMailField("subject")}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Message</span>
+            <textarea
+              className={`${fieldClasses("body")} h-32 resize-y leading-relaxed`}
+              placeholder="Thanks for the update! Looking forward to the next steps."
+              value={agentMailDraft.body}
+              onChange={(event) => handleAgentMailDraftChange("body", event.target.value)}
+              onFocus={() => focusAgentMailField("body")}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              focusAgentMailField("send");
+              handleAgentMailSend();
+            }}
+            onFocus={() => focusAgentMailField("send")}
+            className={sendButtonClasses}
+          >
+            Simulate send
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-700">Recent activity</h3>
+            <div className="mt-3 space-y-2 max-h-64 overflow-auto pr-1">
+              {agentMailActivity.length === 0 ? (
+                <p className="text-sm text-slate-500">Compose a draft or submit the form to see simulated actions.</p>
+              ) : (
+                agentMailActivity.map((entry) => {
+                  const toneClasses =
+                    entry.tone === "warning"
+                      ? "bg-amber-100 text-amber-800 border-amber-200"
+                      : "bg-emerald-50 text-emerald-700 border-emerald-100";
+                  return (
+                    <div
+                      key={entry.id}
+                      className={`rounded-xl border px-3 py-2 text-xs leading-relaxed ${toneClasses}`}
+                    >
+                      <div className="font-semibold">{entry.timestamp}</div>
+                      <div>{entry.message}</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-700">Sample inbox</h3>
+            <p className="text-xs text-slate-500">These records mirror what the AgentMail SDK would retrieve.</p>
+            <div className="mt-3 space-y-3 max-h-64 overflow-auto pr-1">
+              {SAMPLE_AGENTMAIL_INBOX.map((message) => (
+                <div key={message.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs font-semibold text-slate-500">{message.received}</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-800">{message.subject}</div>
+                  <div className="mt-1 text-xs text-slate-500">From {message.from}</div>
+                  <p className="mt-2 text-sm text-slate-600 leading-relaxed">{message.preview}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderDuckAgentPanel = () => {
+    const focus = duckFocusOrder[duckFocusIndex];
+    const queryClasses =
+      focus === "query"
+        ? "mt-1 w-full rounded-lg border border-emerald-400 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:outline-none focus:ring-2 focus:ring-emerald-100"
+        : "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-50";
+
+    const primaryButtonClasses =
+      focus === "run"
+        ? "inline-flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm"
+        : "inline-flex items-center justify-center rounded-lg border border-transparent bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700";
+
+    const secondaryButtonClasses =
+      focus === "reset"
+        ? "inline-flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 shadow-sm"
+        : "inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:border-emerald-300 hover:text-emerald-700";
+
+    return (
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(260px,0.95fr)]">
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Search playground</h3>
+            <p className="text-sm text-slate-600">Submit a query to filter the built-in DuckDuckGo sample payload.</p>
+          </div>
+          <form className="space-y-3" onSubmit={(event) => handleDuckSearch(event)}>
+            <label className="block text-sm">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Search query</span>
+              <input
+                className={queryClasses}
+                placeholder="Try “artificial intelligence” or “computational neuroscience”"
+                value={duckSearchQuery}
+                onFocus={() => focusDuckSection("query")}
+                onChange={(event) => {
+                  setDuckSearchQuery(event.target.value);
+                  if (focus === "query") {
+                    setAgentKeyboardValue(event.target.value);
+                  }
+                }}
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="submit"
+                className={primaryButtonClasses}
+                onFocus={() => focusDuckSection("run")}
+              >
+                Run search
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  focusDuckSection("reset");
+                  handleDuckReset();
+                }}
+                onFocus={() => focusDuckSection("reset")}
+                className={secondaryButtonClasses}
+              >
+                Reset sample
+              </button>
+            </div>
+          </form>
+
+          <div className="border-t border-slate-100 pt-4">
+            <div className="space-y-2 max-h-72 overflow-auto pr-1">
+              {duckSearchResults.map((result) => {
+                const formattedUrl = result.url.replace(/^https?:\/\//, "");
+                return (
+                  <button
+                    key={result.url}
+                    type="button"
+                    onClick={() => handleDuckResultSelect(result)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-left text-sm text-slate-700 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-semibold text-slate-800">{result.title}</span>
+                      <span className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Highlight</span>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-slate-600">{result.snippet}</p>
+                    <div className="mt-2 text-xs text-emerald-600">{formattedUrl}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-slate-700">Agent summary</h3>
+          <p className="mt-2 text-sm leading-relaxed text-slate-600 whitespace-pre-wrap">{duckSummary}</p>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAgentPopup = () => (
+    <AnimatePresence>
+      {isAgentPopupOpen && (
+        <motion.div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={closeAgentPopup}
+        >
+          <motion.div
+            className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-xl flex flex-col"
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 260, damping: 22 }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Agent Launcher</h2>
+                <p className="text-sm text-slate-600">
+                  Triggered via left wink. Navigate with your existing gestures; Select enters an agent workspace.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeAgentPopup}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent text-slate-500 transition hover:border-slate-200 hover:text-slate-700"
+              >
+                <span className="sr-only">Close agent popup</span>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex-1 overflow-auto pr-1">
+              {isAgentSelectionView ? (
+                <div
+                  className="grid gap-3"
+                  style={{
+                    gridTemplateColumns: `repeat(${Math.max(1, Math.min(3, agentOptions.length))}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {agentOptions.map((option, index) => {
+                    const isActive = index === agentCurrentIndex;
+                    const cardClasses = [
+                      "rounded-xl border px-4 py-5 text-left shadow-sm transition-colors cursor-pointer",
+                      isActive
+                        ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50",
+                    ].join(" ");
+
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={cardClasses}
+                        onClick={() => {
+                          setAgentCurrentIndex(index);
+                          setActiveAgent(option.id);
+                          setIsAgentSelectionView(false);
+                          if (option.id === "agentmail") {
+                            setAgentMailFocusIndex(0);
+                            setAgentKeyboardValue(agentMailDraft.to);
+                          } else {
+                            setDuckFocusIndex(0);
+                            setAgentKeyboardValue(duckSearchQuery);
+                            setDuckSummary(DEFAULT_DDG_SUMMARY);
+                          }
+                        }}
+                        onMouseEnter={() => setAgentCurrentIndex(index)}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                            {option.label}
+                          </span>
+                        </div>
+                        <p className="mt-3 text-sm leading-relaxed text-slate-600">{option.description}</p>
+                        {isActive && (
+                          <div className="mt-4 rounded-lg border border-dashed border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-600">
+                            Use Select gesture to confirm
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    <div className="font-semibold text-slate-700">{agentOptions.find((option) => option.id === activeAgent)?.label}</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAgentSelectionView(true);
+                        setAgentKeyboardValue("");
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                    >
+                      Back to agents
+                    </button>
+                  </div>
+                  <div className="pb-2">
+                    {activeAgent === "agentmail" ? renderAgentMailPanel() : renderDuckAgentPanel()}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {!isAgentSelectionView && (
+              <div className="mt-4">
+                <Keyboard
+                  onKeyPress={handleAgentKeyboardPress}
+                  suggestions={agentKeyboardSuggestions}
+                  currentInput={agentKeyboardValue}
+                  onSuggestionClick={handleAgentSuggestionClick}
+                />
+              </div>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
   const ensureSpeechRecognition = useCallback(() => {
     if (recognitionRef.current) return recognitionRef.current;
 
@@ -1421,6 +2377,32 @@ export default function FaceLandmarkerApp() {
     const newlyActivated = activeGestures.filter((gesture) => !prev.includes(gesture));
 
     newlyActivated.forEach((gesture) => {
+      if (gesture === "Left Wink") {
+        handleAgentPopupToggle();
+        return;
+      }
+
+      if (gesture === "Right Wink") {
+        closeAgentPopup();
+        return;
+      }
+
+      if (isAgentPopupOpen) {
+        if (gesture === "Select") {
+          handleAgentSelectConfirm();
+          return;
+        }
+
+        if (gesture === "Left" || gesture === "Right" || gesture === "Up" || gesture === "Down") {
+          handleAgentNavigation(gesture as "Left" | "Right" | "Up" | "Down");
+          return;
+        }
+
+        if (gesture === "Open keyboard") {
+          return;
+        }
+      }
+
       if (gesture === "Select") {
         handleSelectGesture();
         return;
@@ -1444,11 +2426,48 @@ export default function FaceLandmarkerApp() {
     });
 
     prevActiveGesturesRef.current = activeGestures;
-  }, [activeGestures, gridOptions.length, handleKeyboardToggle, handleSelectGesture, moveSelection]);
+  }, [
+    activeGestures,
+    closeAgentPopup,
+    gridOptions.length,
+    handleAgentNavigation,
+    handleAgentPopupToggle,
+    handleAgentSelectConfirm,
+    handleKeyboardToggle,
+    handleSelectGesture,
+    isAgentPopupOpen,
+    moveSelection,
+  ]);
 
   // Developer mode: simulate gesture activation
   const simulateGesture = useCallback((gestureName: string) => {
     if (!isDeveloperMode) return;
+
+    if (gestureName === "Left Wink") {
+      handleAgentPopupToggle();
+      return;
+    }
+
+    if (gestureName === "Right Wink") {
+      closeAgentPopup();
+      return;
+    }
+
+    if (isAgentPopupOpen) {
+      if (gestureName === "Select") {
+        handleAgentSelectConfirm();
+        return;
+      }
+
+      if (gestureName === "Left" || gestureName === "Right" || gestureName === "Up" || gestureName === "Down") {
+        handleAgentNavigation(gestureName as "Left" | "Right" | "Up" | "Down");
+        return;
+      }
+
+      if (gestureName === "Open keyboard") {
+        return;
+      }
+    }
 
     if (gestureName === "Select") {
       handleSelectGesture();
@@ -1470,7 +2489,18 @@ export default function FaceLandmarkerApp() {
         return Math.max(0, Math.min(next, maxIndex));
       });
     }
-  }, [gridOptions.length, handleKeyboardToggle, handleSelectGesture, isDeveloperMode, moveSelection]);
+  }, [
+    closeAgentPopup,
+    gridOptions.length,
+    handleAgentNavigation,
+    handleAgentPopupToggle,
+    handleAgentSelectConfirm,
+    handleKeyboardToggle,
+    handleSelectGesture,
+    isAgentPopupOpen,
+    isDeveloperMode,
+    moveSelection,
+  ]);
 
   useEffect(() => {
     if (!isDeveloperMode) {
@@ -2077,6 +3107,7 @@ export default function FaceLandmarkerApp() {
           </p>
         </div>
       </div>
+      {renderAgentPopup()}
       <AnimatePresence>
         {isDebugOpen && (
           <motion.div
