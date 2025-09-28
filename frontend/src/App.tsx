@@ -48,10 +48,188 @@ type SentenceSuggestion = {
   text: string;
 };
 
+type KeyboardAction =
+  | "input"
+  | "space"
+  | "backspace"
+  | "clear"
+  | "enter"
+  | "suggestion"
+  | "noop";
+
+type KeyboardGridOption = {
+  type: "keyboard";
+  label: string;
+  value?: string;
+  action: KeyboardAction;
+  row: number;
+  column: number;
+  rowStartIndex: number;
+  rowLength: number;
+  indexInKeyboard: number;
+  span: number;
+  gridStart: number;
+  gridEnd: number;
+  gridCenter: number;
+};
+
 type NavigatorGridOption =
   | { type: "sentence"; style: string; text: string }
   | { type: "word"; label: string }
-  | { type: "submit"; label: "Submit Response" };
+  | { type: "submit"; label: "Submit Response" }
+  | KeyboardGridOption;
+
+const KEYBOARD_LAYOUT: Array<
+  Array<{
+    label: string;
+    value?: string;
+    action?: KeyboardAction;
+    span?: number;
+  }>
+> = [
+    [
+      { label: "Q" },
+      { label: "W" },
+      { label: "E" },
+      { label: "R" },
+      { label: "T" },
+      { label: "Y" },
+      { label: "U" },
+      { label: "I" },
+      { label: "O" },
+      { label: "P" },
+    ],
+    [
+      { label: "A" },
+      { label: "S" },
+      { label: "D" },
+      { label: "F" },
+      { label: "G" },
+      { label: "H" },
+      { label: "J" },
+      { label: "K" },
+      { label: "L" },
+    ],
+    [
+      { label: "Z" },
+      { label: "X" },
+      { label: "C" },
+      { label: "V" },
+      { label: "B" },
+      { label: "N" },
+      { label: "M" },
+      { label: "Enter", action: "enter", span: 2 },
+    ],
+    [
+      { label: "Space", value: " ", action: "space", span: 5 },
+      { label: "Backspace", action: "backspace", span: 2 },
+      { label: "Clear", action: "clear", span: 3 },
+    ],
+  ];
+const KEYBOARD_MAX_COLUMNS = KEYBOARD_LAYOUT.reduce((max, row) => Math.max(max, row.length), 0);
+
+const COMMON_WORDS = [
+  "the",
+  "be",
+  "to",
+  "of",
+  "and",
+  "a",
+  "in",
+  "that",
+  "have",
+  "I",
+  "it",
+  "for",
+  "not",
+  "on",
+  "with",
+  "he",
+  "as",
+  "you",
+  "do",
+  "at",
+  "this",
+  "but",
+  "his",
+  "by",
+  "from",
+  "they",
+  "we",
+  "say",
+  "her",
+  "she",
+  "or",
+  "an",
+  "will",
+  "my",
+  "one",
+  "all",
+  "would",
+  "there",
+  "their",
+  "what",
+  "so",
+  "up",
+  "out",
+  "if",
+  "about",
+  "who",
+  "get",
+  "which",
+  "go",
+  "me",
+  "when",
+  "make",
+  "can",
+  "like",
+  "time",
+  "no",
+  "just",
+  "him",
+  "know",
+  "take",
+  "people",
+  "into",
+  "year",
+  "your",
+  "good",
+  "some",
+  "could",
+  "them",
+  "see",
+  "other",
+  "than",
+  "then",
+  "now",
+  "look",
+  "only",
+  "come",
+  "its",
+  "over",
+  "think",
+  "also",
+  "back",
+  "after",
+  "use",
+  "two",
+  "how",
+  "our",
+  "work",
+  "first",
+  "well",
+  "way",
+  "even",
+  "new",
+  "want",
+  "because",
+  "any",
+  "these",
+  "give",
+  "day",
+  "most",
+  "us",
+];
 
 export default function FaceLandmarkerApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -89,11 +267,150 @@ export default function FaceLandmarkerApp() {
   const [currentSuggestions, setCurrentSuggestions] = useState<SuggestionNode[]>([]);
   const [sentenceSuggestions, setSentenceSuggestions] = useState<SentenceSuggestion[]>([]);
   const [isSubmitPressed, setIsSubmitPressed] = useState(false);
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const [typedBuffer, setTypedBuffer] = useState("");
+  const [isDeveloperMode, setIsDeveloperMode] = useState(false);
   const [sentenceViewportColumns, setSentenceViewportColumns] = useState<number>(() =>
     getSentenceViewportColumns()
   );
 
   const columns = Math.min(3, Math.max(1, navigatorOptions.length));
+  const handleKeyboardToggle = useCallback(() => {
+    const now = Date.now();
+    if (now - keyboardToggleCooldownRef.current < 400) {
+      return;
+    }
+    keyboardToggleCooldownRef.current = now;
+    setIsKeyboardOpen((prev) => !prev);
+  }, []);
+  const keyboardSuggestions = useMemo(() => {
+    const prefix = typedBuffer.trim().toLowerCase();
+    if (!prefix) {
+      return [] as string[];
+    }
+    return COMMON_WORDS.filter((word) => word.toLowerCase().startsWith(prefix)).slice(0, 6);
+  }, [typedBuffer]);
+  const keyboardData = useMemo(() => {
+    if (!isKeyboardOpen) {
+      return {
+        options: [] as KeyboardGridOption[],
+        rowStarts: [] as number[],
+        rowLengths: [] as number[],
+        columnCount: Math.max(1, KEYBOARD_MAX_COLUMNS),
+        rows: [] as KeyboardGridOption[][],
+      };
+    }
+
+    const dynamicRows: Array<
+      Array<{
+        label: string;
+        value?: string;
+        action?: KeyboardAction;
+        span?: number;
+      }>
+    > = [];
+
+    const trimmedBuffer = typedBuffer.trim();
+    const hasSuggestions = keyboardSuggestions.length > 0;
+    const suggestionEntries = hasSuggestions
+      ? keyboardSuggestions
+      : trimmedBuffer
+        ? [trimmedBuffer]
+        : ["Start typing to see suggestions"];
+
+    dynamicRows.push(
+      suggestionEntries.map((word) => ({
+        label: word,
+        value: hasSuggestions || trimmedBuffer ? word : undefined,
+        action: hasSuggestions || trimmedBuffer ? ("suggestion" as const) : ("noop" as const),
+        span: hasSuggestions || trimmedBuffer ? 1 : KEYBOARD_MAX_COLUMNS,
+      }))
+    );
+
+    KEYBOARD_LAYOUT.forEach((row) => {
+      dynamicRows.push(row);
+    });
+
+    const options: KeyboardGridOption[] = [];
+    const rowStarts: number[] = [];
+    const rowLengths: number[] = [];
+    const rows: KeyboardGridOption[][] = [];
+
+    dynamicRows.forEach((row, rowIndex) => {
+      const rowStartIndex = options.length;
+      rowStarts[rowIndex] = rowStartIndex;
+      rowLengths[rowIndex] = row.length;
+
+      const isSuggestionRow = row.some((key) => key.action === "suggestion");
+      const gridColumnTarget = isSuggestionRow ? row.length : KEYBOARD_MAX_COLUMNS;
+      let gridCursor = 0;
+
+      const rowOptions: KeyboardGridOption[] = row.map((key, columnIndex) => {
+        const action: KeyboardAction = key.action ?? "input";
+        const baseValue = key.value ?? (action === "input" ? key.label.toLowerCase() : undefined);
+        const optionIndex = options.length + columnIndex;
+        const effectiveSpan = isSuggestionRow ? 1 : key.span ?? 1;
+        const gridStart = gridCursor;
+        const gridEnd = gridCursor + effectiveSpan;
+        const gridCenter = gridStart + effectiveSpan / 2;
+        gridCursor = Math.min(gridEnd, gridColumnTarget);
+
+        return {
+          type: "keyboard",
+          label: key.label,
+          value: baseValue,
+          action,
+          row: rowIndex,
+          column: columnIndex,
+          rowStartIndex,
+          rowLength: row.length,
+          indexInKeyboard: optionIndex,
+          span: key.span ?? 1,
+          gridStart,
+          gridEnd,
+          gridCenter,
+        };
+      });
+
+      rows[rowIndex] = rowOptions;
+      options.push(...rowOptions);
+    });
+
+    const columnCount = Math.max(1, KEYBOARD_MAX_COLUMNS, ...rowLengths);
+
+    return { options, rowStarts, rowLengths, columnCount, rows };
+  }, [isKeyboardOpen, keyboardSuggestions, typedBuffer]);
+  const keyboardOptions = keyboardData.options;
+  const keyboardRowStarts = keyboardData.rowStarts;
+  const keyboardRowLengths = keyboardData.rowLengths;
+  const keyboardColumnCount = keyboardData.columnCount;
+  const keyboardRows = keyboardData.rows;
+  const getKeyboardRowOptionIndex = useCallback(
+    (rowIndex: number, preferredCenter: number) => {
+      const rowStart = keyboardRowStarts[rowIndex];
+      const rowLength = keyboardRowLengths[rowIndex];
+      if (rowStart === undefined || rowLength === undefined || rowLength <= 0) {
+        return null;
+      }
+
+      let bestIndex: number | null = null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (let i = 0; i < rowLength; i += 1) {
+        const option = keyboardOptions[rowStart + i];
+        if (!option) continue;
+        const center = option.gridCenter ?? option.column + 0.5;
+        const distance = Math.abs(center - preferredCenter);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = rowStart + i;
+        }
+      }
+
+      return bestIndex;
+    },
+    [keyboardOptions, keyboardRowLengths, keyboardRowStarts]
+  );
   const sentenceColumns = useMemo(() => {
     if (!sentenceSuggestions.length) {
       return 1;
@@ -102,20 +419,41 @@ export default function FaceLandmarkerApp() {
   }, [sentenceSuggestions.length, sentenceViewportColumns]);
   const prevActiveGesturesRef = useRef<string[]>([]);
   const submitFlashTimeoutRef = useRef<number | null>(null);
+  const keyboardToggleCooldownRef = useRef<number>(0);
+  const keyboardSelectionRef = useRef<{ row: number; column: number } | null>(null);
+  const keyboardRowPreferredCenterRef = useRef<number[]>([]);
+  const keyboardRowReturnColumnRef = useRef<number[]>([]);
 
-  const responseText = useMemo(() => responseWords.join(" "), [responseWords]);
+  const responseText = useMemo(() => {
+    const parts = [...responseWords];
+    if (typedBuffer) {
+      parts.push(typedBuffer);
+    }
+    return parts.join(" ");
+  }, [responseWords, typedBuffer]);
   const trimmedResponse = useMemo(() => responseText.trim(), [responseText]);
   const gridOptions = useMemo<NavigatorGridOption[]>(
-    () => [
-      ...sentenceSuggestions.map((sentence) => ({
-        type: "sentence" as const,
-        style: sentence.style,
-        text: sentence.text,
-      })),
-      ...navigatorOptions.map((word) => ({ type: "word" as const, label: word })),
-      ...(trimmedResponse ? [{ type: "submit" as const, label: "Submit Response" }] : []),
-    ],
-    [navigatorOptions, sentenceSuggestions, trimmedResponse]
+    () => {
+      const options: NavigatorGridOption[] = [
+        ...sentenceSuggestions.map((sentence) => ({
+          type: "sentence" as const,
+          style: sentence.style,
+          text: sentence.text,
+        })),
+        ...navigatorOptions.map((word) => ({ type: "word" as const, label: word })),
+      ];
+
+      if (trimmedResponse) {
+        options.push({ type: "submit" as const, label: "Submit Response" });
+      }
+
+      if (isKeyboardOpen) {
+        options.push(...keyboardOptions);
+      }
+
+      return options;
+    },
+    [isKeyboardOpen, keyboardOptions, navigatorOptions, sentenceSuggestions, trimmedResponse]
   );
 
   const resetNavigator = useCallback(() => {
@@ -126,6 +464,8 @@ export default function FaceLandmarkerApp() {
     setCurrentWordIndex(0);
     setSentenceSuggestions([]);
     setIsSubmitPressed(false);
+    setIsKeyboardOpen(false);
+    setTypedBuffer("");
     if (submitFlashTimeoutRef.current !== null) {
       window.clearTimeout(submitFlashTimeoutRef.current);
       submitFlashTimeoutRef.current = null;
@@ -151,7 +491,7 @@ export default function FaceLandmarkerApp() {
   {
     name: "Right",
     metrics: [
-      { name: "mouthRight", threshold: 0.50 , comparison: ">" },
+      { name: "mouthRight", threshold: 0.50, comparison: ">" },
     ],
     framesRequired: 1,
     onActivate: () => console.log("Right triggered!")
@@ -177,10 +517,10 @@ export default function FaceLandmarkerApp() {
     name: "Open keyboard",
     metrics: [
       { name: "mouthSmileLeft", threshold: 0.5, comparison: ">" },
-      { name: "jawOpen", threshold: 0.15, comparison: "<"},
+      { name: "jawOpen", threshold: 0.15, comparison: "<" },
     ],
     framesRequired: 1,
-    onActivate: () => console.log("Open keyboard triggered!")
+    onActivate: handleKeyboardToggle,
   },
   {
     name: "Left Wink",
@@ -200,7 +540,8 @@ export default function FaceLandmarkerApp() {
     framesRequired: 1,
     onActivate: () => console.log("😉 Right Wink detected!"),
   },
-], []);
+], [handleKeyboardToggle]);
+  const gestureNames = useMemo(() => gestures.map((gesture) => gesture.name), [gestures]);
 
   const activeGestures = useBlendshapeGestures(blendShapes, gestures);
   const totalOptions = gridOptions.length;
@@ -262,6 +603,8 @@ export default function FaceLandmarkerApp() {
     setIsLoadingSuggestions(false);
     setCurrentWordIndex(0);
     setIsSubmitPressed(false);
+    setIsKeyboardOpen(false);
+    setTypedBuffer("");
     setTranscript("");
     setInterimTranscript("");
   }, []);
@@ -416,12 +759,85 @@ export default function FaceLandmarkerApp() {
     }, 220);
   }, [isRunning, isSpeechSupported, resetNavigator, startTranscription, stopTranscription, trimmedResponse]);
 
+  const handleKeyboardSelection = useCallback(
+    (option: KeyboardGridOption) => {
+      switch (option.action) {
+        case "input": {
+          const value = option.value ?? option.label;
+          if (!value) return;
+          setTypedBuffer((prev) => `${prev}${value}`);
+          break;
+        }
+        case "space": {
+          setTypedBuffer((prev) => {
+            const trimmed = prev.trim();
+            if (!trimmed) {
+              return "";
+            }
+            setResponseWords((words) => [...words, trimmed]);
+            return "";
+          });
+          break;
+        }
+        case "backspace": {
+          setTypedBuffer((prev) => {
+            if (prev.length > 0) {
+              return prev.slice(0, -1);
+            }
+            let restoredWord = "";
+            setResponseWords((words) => {
+              if (words.length === 0) {
+                return words;
+              }
+              const next = words.slice(0, -1);
+              restoredWord = words[words.length - 1];
+              return next;
+            });
+            return restoredWord;
+          });
+          break;
+        }
+        case "clear": {
+          setResponseWords([]);
+          setTypedBuffer("");
+          break;
+        }
+        case "enter": {
+          const pendingWord = typedBuffer.trim();
+          const finalParts = pendingWord ? [...responseWords, pendingWord] : [...responseWords];
+          const finalText = finalParts.join(" ").trim();
+          if (finalText) {
+            handleSubmitResponse(finalText);
+          }
+          break;
+        }
+        case "suggestion": {
+          const value = option.value ?? option.label;
+          if (!value) return;
+          setTypedBuffer(value);
+          break;
+        }
+        case "noop": {
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [handleSubmitResponse, responseWords, typedBuffer]
+  );
+
   const handleSelectGesture = useCallback(async () => {
     if (gridOptions.length === 0) return;
 
     const safeIndex = Math.min(currentWordIndex, Math.max(0, gridOptions.length - 1));
     const selected = gridOptions[safeIndex];
     if (!selected) return;
+
+    if (selected.type === "keyboard") {
+      handleKeyboardSelection(selected);
+      return;
+    }
 
     if (selected.type === "submit") {
       if (trimmedResponse) {
@@ -435,6 +851,7 @@ export default function FaceLandmarkerApp() {
       if (!sentenceText) {
         return;
       }
+      setTypedBuffer("");
       setResponseWords([sentenceText]);
       setSentenceSuggestions([]);
       setCurrentSuggestions([]);
@@ -575,7 +992,12 @@ export default function FaceLandmarkerApp() {
       return;
     }
 
-    setResponseWords((prev) => [...prev, selectedNode.word]);
+    const manualWord = typedBuffer.trim();
+    setResponseWords((prev) => {
+      const base = manualWord ? [...prev, manualWord] : [...prev];
+      return [...base, selectedNode.word];
+    });
+    setTypedBuffer("");
     setSentenceSuggestions([]);
 
     const nextSuggestions = selectedNode.next ?? [];
@@ -587,7 +1009,24 @@ export default function FaceLandmarkerApp() {
       setCurrentSuggestions([]);
       setNavigatorOptions(["Start Typing"]);
     }
-  }, [currentSuggestions, currentWordIndex, gridOptions, handleSubmitResponse, interimTranscript, isLoadingSuggestions, navigatorOptions, requestRepeatPrompt, resetNavigator, sentenceSuggestions, startTranscription, stopTranscription, transcript, trimmedResponse]);
+  }, [
+    currentSuggestions,
+    currentWordIndex,
+    gridOptions,
+    handleKeyboardSelection,
+    handleSubmitResponse,
+    interimTranscript,
+    isLoadingSuggestions,
+    navigatorOptions,
+    requestRepeatPrompt,
+    resetNavigator,
+    sentenceSuggestions,
+    startTranscription,
+    stopTranscription,
+    transcript,
+    trimmedResponse,
+    typedBuffer,
+  ]);
 
   useEffect(() => {
     const prev = prevActiveGesturesRef.current;
@@ -603,13 +1042,20 @@ export default function FaceLandmarkerApp() {
         setCurrentWordIndex((current) => {
           const sentenceCount = sentenceSuggestions.length;
           const wordCount = navigatorOptions.length;
+          const keyboardCount = keyboardOptions.length;
           const hasSubmit = Boolean(trimmedResponse);
-          const lastIndex = totalOptions - 1;
-          const submitIndex = hasSubmit ? lastIndex : -1;
+          const submitIndex = hasSubmit ? sentenceCount + wordCount : -1;
 
           const sentenceGridColumns = Math.max(1, sentenceColumns);
           const wordGridColumns = wordCount > 0 ? Math.min(columns, wordCount) : 0;
 
+          const keyboardStartIndex = submitIndex === -1 ? sentenceCount + wordCount : submitIndex + 1;
+          const keyboardLastIndex = keyboardCount > 0 ? keyboardStartIndex + keyboardCount - 1 : -1;
+
+          const firstKeyboardRowLength = keyboardRowLengths[0] ?? 0;
+
+          const isInKeyboardRange = (index: number) =>
+            keyboardCount > 0 && index >= keyboardStartIndex && index <= keyboardLastIndex;
           switch (gesture) {
             case "Right": {
               if (current === submitIndex) return current;
@@ -617,23 +1063,42 @@ export default function FaceLandmarkerApp() {
                 if (sentenceGridColumns <= 1) return current;
                 const nextIndex = current + 1;
                 const sameRow =
-                  Math.floor(current / sentenceGridColumns) ===
-                  Math.floor(nextIndex / sentenceGridColumns);
+                  Math.floor(current / sentenceGridColumns) === Math.floor(nextIndex / sentenceGridColumns);
                 if (nextIndex < sentenceCount && sameRow) {
                   return nextIndex;
                 }
                 return current;
               }
               const position = current - sentenceCount;
-              if (position < 0 || position >= wordCount) return current;
-              const isEndOfRow =
-                wordGridColumns <= 1 ||
-                position % wordGridColumns === wordGridColumns - 1 ||
-                position + 1 >= wordCount;
-              return isEndOfRow ? current : current + 1;
+              if (position >= 0 && position < wordCount) {
+                const isEndOfRow =
+                  wordGridColumns <= 1 ||
+                  position % wordGridColumns === wordGridColumns - 1 ||
+                  position + 1 >= wordCount;
+                return isEndOfRow ? current : current + 1;
+              }
+              if (isInKeyboardRange(current)) {
+                const keyboardPosition = current - keyboardStartIndex;
+                const option = keyboardOptions[keyboardPosition];
+                if (!option) return current;
+                const nextColumn = option.column + 1;
+                if (nextColumn < option.rowLength) {
+                  return keyboardStartIndex + option.rowStartIndex + nextColumn;
+                }
+            return current;
+          }
+              return current;
             }
             case "Left": {
-              if (current === submitIndex) return current;
+              if (current === submitIndex) {
+                if (isInKeyboardRange(keyboardLastIndex)) {
+                  return keyboardLastIndex;
+                }
+                if (wordCount > 0) {
+                  return sentenceCount + wordCount - 1;
+                }
+                return sentenceCount > 0 ? sentenceCount - 1 : current;
+              }
               if (current < sentenceCount) {
                 if (sentenceGridColumns <= 1) return current;
                 const column = current % sentenceGridColumns;
@@ -644,13 +1109,35 @@ export default function FaceLandmarkerApp() {
                 return previousIndex >= 0 ? previousIndex : current;
               }
               const position = current - sentenceCount;
-              if (position <= 0 || position >= wordCount) return current;
-              if (wordGridColumns <= 1) return current;
-              const isStartOfRow = position % wordGridColumns === 0;
-              return isStartOfRow ? current : current - 1;
+              if (position > 0 && position < wordCount) {
+                if (wordGridColumns <= 1) return current;
+                const isStartOfRow = position % wordGridColumns === 0;
+                return isStartOfRow ? current : current - 1;
+              }
+              if (isInKeyboardRange(current)) {
+                const keyboardPosition = current - keyboardStartIndex;
+                const option = keyboardOptions[keyboardPosition];
+                if (!option) return current;
+                if (option.column > 0) {
+                  return keyboardStartIndex + option.rowStartIndex + option.column - 1;
+                }
+                return current;
+              }
+              return current;
             }
             case "Down": {
-              if (current === submitIndex) return current;
+              if (current === submitIndex) {
+                if (keyboardCount > 0) {
+                  return keyboardLastIndex;
+                }
+                if (wordCount > 0) {
+                  return sentenceCount + wordCount - 1;
+                }
+                if (sentenceCount > 0) {
+                  return sentenceCount - 1;
+                }
+                return current;
+              }
               if (current < sentenceCount) {
                 const column = sentenceGridColumns > 0 ? current % sentenceGridColumns : 0;
                 const nextIndex = current + sentenceGridColumns;
@@ -665,31 +1152,146 @@ export default function FaceLandmarkerApp() {
                   }
                   return sentenceCount + wordCount - 1;
                 }
+                if (keyboardCount > 0 && firstKeyboardRowLength > 0) {
+                  const preferredCenter = column + 0.5;
+                  const targetInRow = getKeyboardRowOptionIndex(0, preferredCenter);
+                  if (targetInRow !== null) {
+                    return keyboardStartIndex + targetInRow;
+                  }
+                }
                 return hasSubmit ? submitIndex : current;
               }
               const position = current - sentenceCount;
-              if (position < 0 || position >= wordCount) {
+              if (position >= 0 && position < wordCount) {
+                if (wordGridColumns > 0) {
+                  const next = current + wordGridColumns;
+                  if (next - sentenceCount < wordCount) {
+                    return next;
+                  }
+                }
+                if (keyboardCount > 0 && firstKeyboardRowLength > 0) {
+                  const column = wordGridColumns > 0 ? position % wordGridColumns : 0;
+                  const preferredCenter = column + 0.5;
+                  const targetInRow = getKeyboardRowOptionIndex(0, preferredCenter);
+                  if (targetInRow !== null) {
+                    return keyboardStartIndex + targetInRow;
+                  }
+                }
                 return hasSubmit ? submitIndex : current;
               }
-              if (wordGridColumns > 0) {
-                const next = current + wordGridColumns;
-                if (next - sentenceCount < wordCount) {
-                  return next;
+              if (isInKeyboardRange(current)) {
+                const keyboardPosition = current - keyboardStartIndex;
+                const option = keyboardOptions[keyboardPosition];
+                if (!option) return hasSubmit ? submitIndex : current;
+                const nextRow = option.row + 1;
+                const preferredCenter =
+                  keyboardRowPreferredCenterRef.current[option.row] ??
+                  option.gridCenter ??
+                  option.column + 0.5;
+                const rowStart = keyboardRowStarts[nextRow];
+                const rowLength = keyboardRowLengths[nextRow] ?? 0;
+                if (rowStart === undefined || rowLength <= 0) {
+                  return hasSubmit ? submitIndex : current;
                 }
+
+                const nextRowOptions = keyboardRows[nextRow] ?? [];
+                const spaceColumn = nextRowOptions.findIndex((opt) => opt.label === "Space");
+                const backspaceColumn = nextRowOptions.findIndex((opt) => opt.label === "Backspace");
+                const clearColumn = nextRowOptions.findIndex((opt) => opt.label === "Clear");
+
+                let targetColumn = Math.min(option.column, rowLength - 1);
+                if (spaceColumn !== -1 && ["Z", "X", "C", "V", "B"].includes(option.label)) {
+                  targetColumn = spaceColumn;
+                } else if (backspaceColumn !== -1 && ["N", "M"].includes(option.label)) {
+                  targetColumn = backspaceColumn;
+                } else if (option.label === "Enter" && clearColumn !== -1) {
+                  targetColumn = clearColumn;
+                }
+
+                keyboardRowPreferredCenterRef.current[nextRow] = preferredCenter;
+                keyboardRowReturnColumnRef.current[nextRow] = option.column;
+
+                return keyboardStartIndex + rowStart + Math.max(0, Math.min(targetColumn, rowLength - 1));
               }
               return hasSubmit ? submitIndex : current;
             }
             case "Up": {
               if (current === submitIndex) {
-                if (wordCount > 0 && wordGridColumns > 0) {
-                  const lastWordIndex = wordCount - 1;
-                  const lastRowStart = Math.floor(lastWordIndex / wordGridColumns) * wordGridColumns;
-                  const lastRowLength = wordCount - lastRowStart;
-                  const desiredColumn = Math.min(lastWordIndex % wordGridColumns, Math.max(0, lastRowLength - 1));
-                  return sentenceCount + lastRowStart + desiredColumn;
+                if (wordCount > 0) {
+                  return sentenceCount + wordCount - 1;
                 }
                 if (sentenceCount > 0) {
                   return sentenceCount - 1;
+                }
+                return current;
+              }
+              if (isInKeyboardRange(current)) {
+                const keyboardPosition = current - keyboardStartIndex;
+                const option = keyboardOptions[keyboardPosition];
+                if (!option) return current;
+                if (option.row === 0) {
+                  if (wordCount > 0 && wordGridColumns > 0) {
+                    const lastRow = Math.ceil(wordCount / wordGridColumns) - 1;
+                    const lastRowStart = lastRow * wordGridColumns;
+                    const lastRowLength = wordCount - lastRowStart;
+                    const preferredCenter =
+                      keyboardRowPreferredCenterRef.current[option.row] ??
+                      option.gridCenter ??
+                      option.column + 0.5;
+                    const approximateColumn = Math.min(
+                      Math.max(0, wordGridColumns - 1),
+                      Math.max(0, Math.round(preferredCenter - 0.5))
+                    );
+                    const targetColumn = Math.min(approximateColumn, Math.max(0, lastRowLength - 1));
+                    const wordIndex = sentenceCount + lastRowStart + targetColumn;
+                    if (wordIndex < sentenceCount + wordCount) {
+                      return wordIndex;
+                    }
+                    return sentenceCount + wordCount - 1;
+                  }
+                  if (sentenceCount > 0) {
+                    const preferredCenter =
+                      keyboardRowPreferredCenterRef.current[option.row] ??
+                      option.gridCenter ??
+                      option.column + 0.5;
+                    const approximateColumn = Math.min(
+                      Math.max(0, sentenceGridColumns - 1),
+                      Math.max(0, Math.round(preferredCenter - 0.5))
+                    );
+                    const targetColumn = Math.min(approximateColumn, sentenceGridColumns - 1);
+                    const sentenceRows = Math.ceil(sentenceCount / sentenceGridColumns);
+                    const baseIndex = (sentenceRows - 1) * sentenceGridColumns + targetColumn;
+                    if (baseIndex < sentenceCount) {
+                      return baseIndex;
+                    }
+                    return sentenceCount - 1;
+                  }
+                  return current;
+                }
+                const previousRow = option.row - 1;
+                const prevRowStart = keyboardRowStarts[previousRow];
+                const prevRowLength = keyboardRowLengths[previousRow] ?? 0;
+                if (prevRowStart === undefined || prevRowLength <= 0) {
+                  return current;
+                }
+
+                const returnColumn = keyboardRowReturnColumnRef.current[option.row];
+                if (returnColumn !== undefined) {
+                  const clampedColumn = Math.max(0, Math.min(returnColumn, prevRowLength - 1));
+                  keyboardRowPreferredCenterRef.current[previousRow] =
+                    keyboardRows[previousRow]?.[clampedColumn]?.gridCenter ?? clampedColumn + 0.5;
+                  return keyboardStartIndex + prevRowStart + clampedColumn;
+                }
+
+                const preferredCenter =
+                  keyboardRowPreferredCenterRef.current[previousRow] ??
+                  keyboardRowPreferredCenterRef.current[option.row] ??
+                  option.gridCenter ??
+                  option.column + 0.5;
+                const targetInRow = getKeyboardRowOptionIndex(previousRow, preferredCenter);
+                if (targetInRow !== null) {
+                  keyboardRowPreferredCenterRef.current[previousRow] = preferredCenter;
+                  return keyboardStartIndex + targetInRow;
                 }
                 return current;
               }
@@ -701,24 +1303,25 @@ export default function FaceLandmarkerApp() {
                 return current;
               }
               const position = current - sentenceCount;
-              if (position < 0 || position >= wordCount) {
-                return sentenceCount > 0 ? sentenceCount - 1 : current;
-              }
-              if (wordGridColumns > 0) {
-                const next = current - wordGridColumns;
-                if (next >= sentenceCount) {
-                  return next;
+              if (position >= 0 && position < wordCount) {
+                if (wordGridColumns > 0) {
+                  const next = current - wordGridColumns;
+                  if (next >= sentenceCount) {
+                    return next;
+                  }
                 }
-              }
-              if (sentenceCount > 0) {
-                const wordColumn = wordGridColumns > 0 ? position % wordGridColumns : 0;
-                const targetColumn = Math.min(wordColumn, sentenceGridColumns - 1);
-                const sentenceRows = Math.ceil(sentenceCount / sentenceGridColumns);
-                const baseIndex = (sentenceRows - 1) * sentenceGridColumns + targetColumn;
-                if (baseIndex < sentenceCount) {
-                  return baseIndex;
+                if (sentenceCount > 0) {
+                  const wordColumn = wordGridColumns > 0 ? position % wordGridColumns : 0;
+                  const targetColumn = Math.min(wordColumn, sentenceGridColumns - 1);
+                  const sentenceRows = Math.ceil(sentenceCount / sentenceGridColumns);
+                  const baseIndex = (sentenceRows - 1) * sentenceGridColumns + targetColumn;
+                  if (baseIndex < sentenceCount) {
+                    return baseIndex;
+                  }
+                  return sentenceCount - 1;
+
                 }
-                return sentenceCount - 1;
+                return current;
               }
               return current;
             }
@@ -730,7 +1333,537 @@ export default function FaceLandmarkerApp() {
     }
 
     prevActiveGesturesRef.current = activeGestures;
-  }, [activeGestures, columns, handleSelectGesture, navigatorOptions, sentenceColumns, sentenceSuggestions, totalOptions, trimmedResponse]);
+  }, [
+    activeGestures,
+    columns,
+    handleSelectGesture,
+    getKeyboardRowOptionIndex,
+    keyboardOptions,
+    keyboardRowLengths,
+    keyboardRowStarts,
+    keyboardRows,
+    navigatorOptions,
+    sentenceColumns,
+    sentenceSuggestions,
+    totalOptions,
+    trimmedResponse,
+  ]);
+
+  // Developer mode: simulate gesture activation
+  const simulateGesture = useCallback((gestureName: string) => {
+    if (!isDeveloperMode) return;
+
+    if (gestureName === "Select") {
+      handleSelectGesture();
+      return;
+    }
+
+    if (gestureName === "Open keyboard") {
+      handleKeyboardToggle();
+      return;
+    }
+
+    // Navigate using the same logic as the useEffect
+    setCurrentWordIndex((current) => {
+      const sentenceCount = sentenceSuggestions.length;
+      const wordCount = navigatorOptions.length;
+      const keyboardCount = keyboardOptions.length;
+      const hasSubmit = Boolean(trimmedResponse);
+      const submitIndex = hasSubmit ? sentenceCount + wordCount : -1;
+
+      const sentenceGridColumns = Math.max(1, sentenceColumns);
+      const wordGridColumns = wordCount > 0 ? Math.min(columns, wordCount) : 0;
+
+      const keyboardStartIndex = submitIndex === -1 ? sentenceCount + wordCount : submitIndex + 1;
+      const keyboardLastIndex = keyboardCount > 0 ? keyboardStartIndex + keyboardCount - 1 : -1;
+
+      const firstKeyboardRowLength = keyboardRowLengths[0] ?? 0;
+
+      const isInKeyboardRange = (index: number) =>
+        keyboardCount > 0 && index >= keyboardStartIndex && index <= keyboardLastIndex;
+
+      switch (gestureName) {
+        case "Right": {
+          if (current === submitIndex) {
+            if (keyboardCount > 0) {
+              return keyboardStartIndex;
+            }
+            return current;
+          }
+          if (current < sentenceCount) {
+            if (sentenceGridColumns <= 1) return current;
+            const nextIndex = current + 1;
+            const sameRow =
+              Math.floor(current / sentenceGridColumns) === Math.floor(nextIndex / sentenceGridColumns);
+            if (nextIndex < sentenceCount && sameRow) {
+              return nextIndex;
+            }
+            return current;
+          }
+          const position = current - sentenceCount;
+          if (position >= 0 && position < wordCount) {
+            const isEndOfRow =
+              wordGridColumns <= 1 ||
+              position % wordGridColumns === wordGridColumns - 1 ||
+              position + 1 >= wordCount;
+            return isEndOfRow ? current : current + 1;
+          }
+          if (isInKeyboardRange(current)) {
+            const keyboardPosition = current - keyboardStartIndex;
+            const option = keyboardOptions[keyboardPosition];
+            if (!option) return current;
+            const nextColumn = option.column + 1;
+            if (nextColumn < option.rowLength) {
+              return keyboardStartIndex + option.rowStartIndex + nextColumn;
+            }
+            return current;
+          }
+          return current;
+        }
+        case "Left": {
+          if (current === submitIndex) {
+            if (wordCount > 0) {
+              return sentenceCount + wordCount - 1;
+            }
+            if (sentenceCount > 0) {
+              return sentenceCount - 1;
+            }
+            return current;
+          }
+          if (current < sentenceCount) {
+            if (sentenceGridColumns <= 1) return current;
+            const column = current % sentenceGridColumns;
+            if (column === 0) {
+              return current;
+            }
+            const previousIndex = current - 1;
+            return previousIndex >= 0 ? previousIndex : current;
+          }
+          const position = current - sentenceCount;
+          if (position > 0 && position < wordCount) {
+            if (wordGridColumns <= 1) return current;
+            const isStartOfRow = position % wordGridColumns === 0;
+            return isStartOfRow ? current : current - 1;
+          }
+          if (isInKeyboardRange(current)) {
+            const keyboardPosition = current - keyboardStartIndex;
+            const option = keyboardOptions[keyboardPosition];
+            if (!option) return current;
+            if (option.column > 0) {
+              return keyboardStartIndex + option.rowStartIndex + option.column - 1;
+            }
+            return current;
+          }
+          return current;
+        }
+        case "Down": {
+          if (current === submitIndex) {
+            if (keyboardCount > 0) {
+              return keyboardStartIndex;
+            }
+            if (wordCount > 0) {
+              return sentenceCount + wordCount - 1;
+            }
+            if (sentenceCount > 0) {
+              return sentenceCount - 1;
+            }
+            return current;
+          }
+          if (current < sentenceCount) {
+            const column = sentenceGridColumns > 0 ? current % sentenceGridColumns : 0;
+            const nextIndex = current + sentenceGridColumns;
+            if (nextIndex < sentenceCount) {
+              return nextIndex;
+            }
+            if (wordCount > 0) {
+              const targetColumn = Math.min(column, Math.max(0, wordGridColumns - 1));
+              const targetIndex = sentenceCount + targetColumn;
+              if (targetIndex < sentenceCount + wordCount) {
+                return targetIndex;
+              }
+              return sentenceCount + wordCount - 1;
+            }
+            if (keyboardCount > 0 && firstKeyboardRowLength > 0) {
+              const preferredCenter = column + 0.5;
+              const targetInRow = getKeyboardRowOptionIndex(0, preferredCenter);
+              if (targetInRow !== null) {
+                return keyboardStartIndex + targetInRow;
+              }
+            }
+            return hasSubmit ? submitIndex : current;
+          }
+          const position = current - sentenceCount;
+          if (position >= 0 && position < wordCount) {
+            if (wordGridColumns > 0) {
+              const next = current + wordGridColumns;
+              if (next - sentenceCount < wordCount) {
+                return next;
+              }
+            }
+            if (keyboardCount > 0 && firstKeyboardRowLength > 0) {
+              const column = wordGridColumns > 0 ? position % wordGridColumns : 0;
+              const preferredCenter = column + 0.5;
+              const targetInRow = getKeyboardRowOptionIndex(0, preferredCenter);
+              if (targetInRow !== null) {
+                return keyboardStartIndex + targetInRow;
+              }
+            }
+            return hasSubmit ? submitIndex : current;
+          }
+          if (isInKeyboardRange(current)) {
+            const keyboardPosition = current - keyboardStartIndex;
+            const option = keyboardOptions[keyboardPosition];
+            if (!option) return hasSubmit ? submitIndex : current;
+            const nextRow = option.row + 1;
+            const preferredCenter =
+              keyboardRowPreferredCenterRef.current[option.row] ??
+              option.gridCenter ??
+              option.column + 0.5;
+            const rowStart = keyboardRowStarts[nextRow];
+            const rowLength = keyboardRowLengths[nextRow] ?? 0;
+            if (rowStart === undefined || rowLength <= 0) {
+              return hasSubmit ? submitIndex : current;
+            }
+
+            const nextRowOptions = keyboardRows[nextRow] ?? [];
+            const spaceColumn = nextRowOptions.findIndex((opt) => opt.label === "Space");
+            const backspaceColumn = nextRowOptions.findIndex((opt) => opt.label === "Backspace");
+            const clearColumn = nextRowOptions.findIndex((opt) => opt.label === "Clear");
+
+            let targetColumn = Math.min(option.column, rowLength - 1);
+            if (spaceColumn !== -1 && ["Z", "X", "C", "V", "B"].includes(option.label)) {
+              targetColumn = spaceColumn;
+            } else if (backspaceColumn !== -1 && ["N", "M"].includes(option.label)) {
+              targetColumn = backspaceColumn;
+            } else if (option.label === "Enter" && clearColumn !== -1) {
+              targetColumn = clearColumn;
+            }
+
+            keyboardRowPreferredCenterRef.current[nextRow] = preferredCenter;
+            keyboardRowReturnColumnRef.current[nextRow] = option.column;
+
+            return keyboardStartIndex + rowStart + Math.max(0, Math.min(targetColumn, rowLength - 1));
+          }
+          return hasSubmit ? submitIndex : current;
+        }
+        case "Up": {
+          if (current === submitIndex) {
+            if (wordCount > 0) {
+              return sentenceCount + wordCount - 1;
+            }
+            if (sentenceCount > 0) {
+              return sentenceCount - 1;
+            }
+            return current;
+          }
+          if (isInKeyboardRange(current)) {
+            const keyboardPosition = current - keyboardStartIndex;
+            const option = keyboardOptions[keyboardPosition];
+            if (!option) return current;
+            if (option.row === 0) {
+              if (wordCount > 0 && wordGridColumns > 0) {
+                const lastRow = Math.ceil(wordCount / wordGridColumns) - 1;
+                const lastRowStart = lastRow * wordGridColumns;
+                const lastRowLength = wordCount - lastRowStart;
+                const preferredCenter =
+                  keyboardRowPreferredCenterRef.current[option.row] ??
+                  option.gridCenter ??
+                  option.column + 0.5;
+                const approximateColumn = Math.min(
+                  Math.max(0, wordGridColumns - 1),
+                  Math.max(0, Math.round(preferredCenter - 0.5))
+                );
+                const targetColumn = Math.min(approximateColumn, Math.max(0, lastRowLength - 1));
+                const wordIndex = sentenceCount + lastRowStart + targetColumn;
+                if (wordIndex < sentenceCount + wordCount) {
+                  return wordIndex;
+                }
+                return sentenceCount + wordCount - 1;
+              }
+              if (sentenceCount > 0) {
+                const preferredCenter =
+                  keyboardRowPreferredCenterRef.current[option.row] ??
+                  option.gridCenter ??
+                  option.column + 0.5;
+                const approximateColumn = Math.min(
+                  Math.max(0, sentenceGridColumns - 1),
+                  Math.max(0, Math.round(preferredCenter - 0.5))
+                );
+                const targetColumn = Math.min(approximateColumn, sentenceGridColumns - 1);
+                const sentenceRows = Math.ceil(sentenceCount / sentenceGridColumns);
+                const baseIndex = (sentenceRows - 1) * sentenceGridColumns + targetColumn;
+                if (baseIndex < sentenceCount) {
+                  return baseIndex;
+                }
+                return sentenceCount - 1;
+              }
+              return current;
+            }
+            const previousRow = option.row - 1;
+            const prevRowStart = keyboardRowStarts[previousRow];
+            const prevRowLength = keyboardRowLengths[previousRow] ?? 0;
+            if (prevRowStart === undefined || prevRowLength <= 0) {
+              return current;
+            }
+
+            const returnColumn = keyboardRowReturnColumnRef.current[option.row];
+            if (returnColumn !== undefined) {
+              const clampedColumn = Math.max(0, Math.min(returnColumn, prevRowLength - 1));
+              keyboardRowPreferredCenterRef.current[previousRow] =
+                keyboardRows[previousRow]?.[clampedColumn]?.gridCenter ?? clampedColumn + 0.5;
+              return keyboardStartIndex + prevRowStart + clampedColumn;
+            }
+
+            const preferredCenter =
+              keyboardRowPreferredCenterRef.current[previousRow] ??
+              keyboardRowPreferredCenterRef.current[option.row] ??
+              option.gridCenter ??
+              option.column + 0.5;
+            const targetInRow = getKeyboardRowOptionIndex(previousRow, preferredCenter);
+            if (targetInRow !== null) {
+              keyboardRowPreferredCenterRef.current[previousRow] = preferredCenter;
+              return keyboardStartIndex + targetInRow;
+            }
+            return current;
+          }
+          if (current < sentenceCount) {
+            const previousIndex = current - sentenceGridColumns;
+            if (previousIndex >= 0) {
+              return previousIndex;
+            }
+            return current;
+          }
+          const position = current - sentenceCount;
+          if (position >= 0 && position < wordCount) {
+            if (wordGridColumns > 0) {
+              const next = current - wordGridColumns;
+              if (next >= sentenceCount) {
+                return next;
+              }
+            }
+            if (sentenceCount > 0) {
+              const wordColumn = wordGridColumns > 0 ? position % wordGridColumns : 0;
+              const targetColumn = Math.min(wordColumn, sentenceGridColumns - 1);
+              const sentenceRows = Math.ceil(sentenceCount / sentenceGridColumns);
+              const baseIndex = (sentenceRows - 1) * sentenceGridColumns + targetColumn;
+              if (baseIndex < sentenceCount) {
+                return baseIndex;
+              }
+              return sentenceCount - 1;
+            }
+            return current;
+          }
+          return current;
+        }
+        default:
+          return current;
+      }
+    });
+  }, [
+    isDeveloperMode,
+    handleSelectGesture,
+    handleKeyboardToggle,
+    getKeyboardRowOptionIndex,
+    sentenceSuggestions,
+    navigatorOptions,
+    keyboardOptions,
+    keyboardRows,
+    trimmedResponse,
+    totalOptions,
+    sentenceColumns,
+    columns,
+    keyboardRowStarts,
+    keyboardRowLengths,
+  ]);
+
+  useEffect(() => {
+    if (!isDeveloperMode) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tagName = target.tagName.toLowerCase();
+        if (tagName === "input" || tagName === "textarea" || target.isContentEditable) {
+          return;
+        }
+      }
+
+      let handled = false;
+      switch (event.key) {
+        case "ArrowLeft":
+          simulateGesture("Left");
+          handled = true;
+          break;
+        case "ArrowRight":
+          simulateGesture("Right");
+          handled = true;
+          break;
+        case "ArrowUp":
+          simulateGesture("Up");
+          handled = true;
+          break;
+        case "ArrowDown":
+          simulateGesture("Down");
+          handled = true;
+          break;
+        case " ":
+        case "Space":
+        case "Spacebar":
+          simulateGesture("Select");
+          handled = true;
+          break;
+        default: {
+          if (event.key === "k" || event.key === "K") {
+            simulateGesture("Open keyboard");
+            handled = true;
+          }
+          break;
+        }
+      }
+
+      if (handled) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isDeveloperMode, simulateGesture]);
+
+  useEffect(() => {
+    if (!isKeyboardOpen) {
+      keyboardSelectionRef.current = null;
+      keyboardRowPreferredCenterRef.current = [];
+      keyboardRowReturnColumnRef.current = [];
+      return;
+    }
+
+    if (keyboardOptions.length > 0) {
+      setCurrentWordIndex((current) => {
+        const keyboardStart = sentenceSuggestions.length + navigatorOptions.length + (trimmedResponse ? 1 : 0);
+        const keyboardEnd = keyboardStart + keyboardOptions.length;
+        if (current >= keyboardStart && current < keyboardEnd) {
+          return current;
+        }
+        return keyboardStart;
+      });
+    } else {
+      setCurrentWordIndex((current) => {
+        const keyboardStart = sentenceSuggestions.length + navigatorOptions.length + (trimmedResponse ? 1 : 0);
+        if (current >= keyboardStart) {
+          if (trimmedResponse) {
+            return Math.max(0, totalOptions - 1);
+          }
+          const fallback = keyboardStart - 1;
+          if (fallback >= 0) {
+            return fallback;
+          }
+          return 0;
+        }
+        return current;
+      });
+    }
+  }, [
+    keyboardOptions.length,
+    navigatorOptions.length,
+    sentenceSuggestions.length,
+    totalOptions,
+    trimmedResponse,
+    isKeyboardOpen,
+  ]);
+
+  useEffect(() => {
+    if (!isKeyboardOpen) {
+      return;
+    }
+    const keyboardStart = sentenceSuggestions.length + navigatorOptions.length + (trimmedResponse ? 1 : 0);
+    const relativeIndex = currentWordIndex - keyboardStart;
+    if (relativeIndex < 0 || relativeIndex >= keyboardOptions.length) {
+      return;
+    }
+
+    const option = keyboardOptions[relativeIndex];
+    if (!option) {
+      return;
+    }
+
+    keyboardSelectionRef.current = { row: option.row, column: option.column };
+    keyboardRowPreferredCenterRef.current[option.row] = option.gridCenter ?? option.column + 0.5;
+  }, [
+    currentWordIndex,
+    isKeyboardOpen,
+    keyboardOptions,
+    navigatorOptions.length,
+    sentenceSuggestions.length,
+  ]);
+
+  useEffect(() => {
+    if (!isKeyboardOpen) {
+      return;
+    }
+    if (keyboardOptions.length === 0) {
+      return;
+    }
+
+    const keyboardStart = sentenceSuggestions.length + navigatorOptions.length + (trimmedResponse ? 1 : 0);
+
+    setCurrentWordIndex((current) => {
+      if (current < keyboardStart) {
+        return current;
+      }
+
+      const keyboardEnd = keyboardStart + keyboardOptions.length;
+      const anchor = keyboardSelectionRef.current;
+      let nextIndex: number | null = null;
+
+      if (anchor) {
+        const rowStart = keyboardRowStarts[anchor.row];
+        const rowLength = keyboardRowLengths[anchor.row] ?? 0;
+        const preferredCenter = keyboardRowPreferredCenterRef.current[anchor.row];
+
+        if (rowStart !== undefined && rowLength > 0) {
+          const clampedColumn = Math.min(anchor.column, rowLength - 1);
+          nextIndex = keyboardStart + rowStart + clampedColumn;
+        } else if (preferredCenter !== undefined) {
+          const relative = getKeyboardRowOptionIndex(anchor.row, preferredCenter);
+          if (relative !== null) {
+            nextIndex = keyboardStart + relative;
+          }
+        }
+      }
+
+      if (nextIndex === null) {
+        if (current >= keyboardEnd) {
+          nextIndex = keyboardEnd - 1;
+        } else {
+          nextIndex = current;
+        }
+      }
+
+      if (nextIndex < keyboardStart) {
+        nextIndex = keyboardStart;
+      }
+
+      if (nextIndex >= keyboardEnd) {
+        nextIndex = Math.max(keyboardStart, keyboardEnd - 1);
+      }
+
+      return nextIndex;
+    });
+  }, [
+    getKeyboardRowOptionIndex,
+    isKeyboardOpen,
+    keyboardOptions,
+    keyboardRowLengths,
+    keyboardRowStarts,
+    navigatorOptions.length,
+    sentenceSuggestions.length,
+  ]);
 
   const loadModel = useCallback(async () => {
     setLoadingMsg("Loading MediaPipe Tasks…");
@@ -880,11 +2013,18 @@ export default function FaceLandmarkerApp() {
 
 
   const renderWordNavigator = () => {
+    const sentenceCount = sentenceSuggestions.length;
+    const wordCount = navigatorOptions.length;
+    const hasSubmit = Boolean(trimmedResponse);
+    const submitIndex = hasSubmit ? sentenceCount + wordCount : -1;
+    const keyboardStartIndex = submitIndex === -1 ? sentenceCount + wordCount : submitIndex + 1;
+    const hasKeyboard = isKeyboardOpen && keyboardOptions.length > 0;
     const sentenceCards = (
       <div
         className="grid gap-3"
         style={{ gridTemplateColumns: `repeat(${Math.max(1, sentenceColumns)}, minmax(0, 1fr))` }}
       >
+
         {sentenceSuggestions.map((sentence, idx) => {
           const optionIndex = idx;
           const isActive = optionIndex === currentWordIndex;
@@ -923,7 +2063,7 @@ export default function FaceLandmarkerApp() {
         }}
       >
         {navigatorOptions.map((word, idx) => {
-          const optionIndex = sentenceSuggestions.length + idx;
+          const optionIndex = sentenceCount + idx;
           const isActive = optionIndex === currentWordIndex;
           const normalized = word.trim().toLowerCase();
           const isInformational = [
@@ -950,33 +2090,102 @@ export default function FaceLandmarkerApp() {
             </div>
           );
         })}
-
-        {trimmedResponse && (
-          <div
-            key="submit"
-            className={`rounded-xl border px-4 py-4 text-center text-sm font-semibold shadow-sm transition-colors ${
-              currentWordIndex === gridOptions.length - 1
-                ? isSubmitPressed || isSelectActive
-                  ? "border-emerald-600 bg-emerald-600 text-white"
-                  : "border-emerald-400 bg-emerald-50 text-emerald-700"
-                : "border-slate-200 bg-white text-emerald-600"
-            }`}
-            style={{
-              gridColumn: `1 / span ${Math.max(
-                1,
-                Math.min(columns, navigatorOptions.length || 1)
-              )}`,
-            }}
-          >
-            Submit Response
-          </div>
-        )}
       </div>
     ) : (
       <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">
         No suggestions available yet.
       </div>
     );
+    const submitButton = hasSubmit ? (
+      <div
+        key="submit"
+        className={`mt-2 rounded-xl border px-4 py-4 text-center text-sm font-semibold shadow-sm transition-colors ${currentWordIndex === submitIndex
+          ? isSubmitPressed || isSelectActive
+            ? "border-emerald-600 bg-emerald-600 text-white"
+            : "border-emerald-400 bg-emerald-50 text-emerald-700"
+          : "border-slate-200 bg-white text-emerald-600"
+          }`}
+      >
+        Submit Response
+      </div>
+    ) : null;
+    const keyboardGrid = hasKeyboard ? (
+      <div className="space-y-2">
+        {keyboardRows.map((rowOptions, rowIndex) => {
+          const rowStart = keyboardRowStarts[rowIndex] ?? 0;
+          const isSuggestionRow = rowOptions.some(
+            (option) => option.action === "suggestion" || option.action === "noop"
+          );
+          const isPlaceholderRow = isSuggestionRow && rowOptions.every((option) => option.action === "noop");
+          const gridTemplateColumns = isPlaceholderRow
+            ? `repeat(${Math.max(1, keyboardColumnCount)}, minmax(0, 1fr))`
+            : isSuggestionRow
+              ? `repeat(${Math.max(1, rowOptions.length)}, minmax(0, 1fr))`
+              : `repeat(${Math.max(1, keyboardColumnCount)}, minmax(0, 1fr))`;
+
+          return (
+            <div
+              key={`keyboard-row-${rowIndex}`}
+              className="grid gap-2"
+              style={{ gridTemplateColumns }}
+            >
+              {rowOptions.map((option, columnIndex) => {
+                const optionIndex = keyboardStartIndex + rowStart + columnIndex;
+                const isActive = optionIndex === currentWordIndex;
+                const isPressed = isActive && isSelectActive;
+                const isDisabled = option.action === "noop";
+
+                let keyClasses = isSuggestionRow
+                  ? "flex items-center justify-center rounded-full border px-3 py-2 text-sm font-medium transition-colors"
+                  : "flex items-center justify-center rounded-xl border px-3 py-3 text-sm font-medium transition-colors";
+
+                if (!isSuggestionRow && option.action !== "input") {
+                  keyClasses += " text-xs";
+                }
+
+                if (isActive) {
+                  keyClasses += isPressed
+                    ? " border-emerald-500 bg-emerald-600 text-white"
+                    : " border-emerald-300 bg-emerald-50 text-emerald-700";
+                } else {
+                  if (isSuggestionRow) {
+                    keyClasses += isDisabled
+                      ? " border-slate-200 bg-slate-50 text-slate-400"
+                      : " border-slate-200 bg-white text-emerald-700";
+                  } else {
+                    keyClasses += " border-slate-200 bg-white text-slate-600";
+                  }
+                }
+
+                const Element = isDisabled ? "div" : "button";
+                const elementProps = isDisabled
+                  ? {}
+                  : {
+                      type: "button" as const,
+                      onClick: () => handleKeyboardSelection(option),
+                      tabIndex: -1,
+                    };
+
+                return (
+                  <Element
+                    key={`keyboard-key-${option.label}-${columnIndex}`}
+                    className={keyClasses}
+                    style={
+                      option.span && option.span > 1 && (!isSuggestionRow || isPlaceholderRow)
+                        ? { gridColumn: `span ${option.span}` }
+                        : undefined
+                    }
+                    {...elementProps}
+                  >
+                    {option.label}
+                  </Element>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    ) : null;
 
     return (
       <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4 space-y-4">
@@ -986,6 +2195,11 @@ export default function FaceLandmarkerApp() {
             <p className="text-sm text-slate-600">
               Highlight “Start Typing” to fetch responses, then use Select to build your reply word by word.
             </p>
+            {isKeyboardOpen && (
+              <p className="mt-1 text-xs font-medium text-emerald-600">
+                Keyboard mode is active. Use the smile gesture to toggle, then navigate to letters or suggestions.
+              </p>
+            )}
           </div>
           {isLoadingSuggestions ? (
             <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
@@ -997,8 +2211,23 @@ export default function FaceLandmarkerApp() {
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">My Response</div>
           <div className="mt-2 min-h-[52px] rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap">
-            {responseWords.length > 0 ? (
-              <span>{responseText}</span>
+            {responseWords.length > 0 || typedBuffer ? (
+              <span>
+                {responseWords.map((word, idx) => (
+                  <React.Fragment key={`response-word-${idx}`}>
+                    {idx > 0 ? " " : ""}
+                    {word}
+                  </React.Fragment>
+                ))}
+                {typedBuffer && (
+                  <>
+                    {responseWords.length > 0 ? " " : ""}
+                    <span className="inline-flex items-center rounded border border-emerald-200 bg-white px-2 py-0.5 font-medium text-emerald-700 shadow-sm">
+                      {typedBuffer}
+                    </span>
+                  </>
+                )}
+              </span>
             ) : (
               <span className="text-slate-400">No words selected yet.</span>
             )}
@@ -1007,6 +2236,8 @@ export default function FaceLandmarkerApp() {
 
         {sentenceSuggestions.length > 0 && sentenceCards}
         {wordGrid}
+        {submitButton}
+        {keyboardGrid}
       </div>
     );
   };
@@ -1046,45 +2277,65 @@ export default function FaceLandmarkerApp() {
             <button onClick={stop} className="inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl shadow">
               <Pause className="w-4 h-4" /> Stop
             </button>
-        )}
-        
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
-          <Activity className="w-5 h-5" />
-          <span className="font-medium">Status</span>
+          )}
+
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+            <Activity className="w-5 h-5" />
+            <span className="font-medium">Status</span>
             <span className={`px-3 py-1 rounded-full text-xs font-semibold ${isRunning ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
               {isRunning ? "Running" : "Stopped"}
             </span>
           </div>
-        
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
-          <Camera className="w-5 h-5" />
-          <span className="font-medium">FPS</span>
-          <span className="font-mono text-sm">{fps}</span>
-        </div>
 
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm min-h-[56px]">
-          <Cpu className="w-5 h-5" />
-          <div className="flex flex-col gap-1">
-            <span className="font-medium leading-none">Gestures</span>
-            <div className="flex flex-wrap items-center gap-1">
-              {activeGestures.length === 0 ? (
-                <span className="text-xs text-slate-400">None</span>
-              ) : (
-                activeGestures.map((gesture) => (
-                  <span
-                    key={gesture}
-                    className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700"
-                  >
-                    {gesture}
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+            <Camera className="w-5 h-5" />
+            <span className="font-medium">FPS</span>
+            <span className="font-mono text-sm">{fps}</span>
+          </div>
+
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm min-h-[56px]">
+            <Cpu className="w-5 h-5" />
+            <div className="flex flex-col gap-1 w-full">
+              <div className="flex items-center gap-2">
+                <span className="font-medium leading-none">Gestures</span>
+                {isDeveloperMode && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
+                    DEV MODE: Click to test
                   </span>
-                ))
-              )}
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1 min-h-[26px]">
+                {gestureNames.map((name) => {
+                  const isActive = activeGestures.includes(name);
+                  const baseClasses = "text-xs px-2 py-0.5 rounded-full border text-center transition-colors";
+                  const stateClasses = isActive
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-slate-200 bg-slate-100 text-slate-500";
+                  const interactiveClasses = isDeveloperMode
+                    ? "cursor-pointer hover:bg-emerald-100 hover:border-emerald-300 hover:text-emerald-700"
+                    : "";
+                  
+                  return isDeveloperMode ? (
+                    <button
+                      key={name}
+                      className={`${baseClasses} ${stateClasses} ${interactiveClasses}`}
+                      onClick={() => simulateGesture(name)}
+                      title={`Click to simulate ${name} gesture`}
+                    >
+                      {name}
+                    </button>
+                  ) : (
+                    <span key={name} className={`${baseClasses} ${stateClasses}`}>
+                      {name}
+                    </span>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Main Layout */}
+        {/* Main Layout */}
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)] items-start">
           <div className="space-y-6">
             <div
@@ -1203,6 +2454,29 @@ export default function FaceLandmarkerApp() {
                   ))
                 )}
               </div>
+              <details className="mt-6 text-slate-500">
+                <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Advanced
+                </summary>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="h-4 w-4 text-slate-400" />
+                    <span className="font-medium text-slate-600">Developer mode</span>
+                    <span className="text-xs text-slate-400">Keyboard testing helpers</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsDeveloperMode((prev) => !prev)}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                      isDeveloperMode
+                        ? "border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-purple-300 hover:text-purple-700"
+                    }`}
+                  >
+                    {isDeveloperMode ? "Disable" : "Enable"}
+                  </button>
+                </div>
+              </details>
             </motion.div>
           </motion.div>
         )}
