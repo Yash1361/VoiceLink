@@ -489,11 +489,8 @@ export default function FaceLandmarkerApp() {
   const prevActiveGesturesRef = useRef<string[]>([]);
   const submitFlashTimeoutRef = useRef<number | null>(null);
   const keyboardToggleCooldownRef = useRef<number>(0);
-<<<<<<< HEAD
   const suggestionRequestIdRef = useRef(0);
-=======
   const agentPopupCooldownRef = useRef<number>(0);
->>>>>>> 4ac8f29 (add agent launcher)
   const responseText = useMemo(() => {
     const parts = [...responseWords];
     if (typedBuffer) {
