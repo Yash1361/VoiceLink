@@ -80,7 +80,7 @@ PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
         (
             "system",
             "You help a user craft a spoken reply by building both concise next-word suggestions and a few complete sentences. "
-            "You are always given a full sentence that someone else just said and the partial reply the user has already spoken. "
+            "You are always given the running conversation with speaker labels plus the partial reply the user has already spoken. "
             "Respond only with JSON matching this schema:\n{format_instructions}\nGuidelines:\n"
             "Word suggestions:\n"
             "- Provide exactly {suggestions_count} root-level word options ordered from most to least likely.\n"
@@ -96,6 +96,7 @@ PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
         ),
         (
             "human",
+            "Conversation so far (may be empty):\n{conversation}\n"
             "Incoming sentence from another person: {question}\n"
             "User's reply so far: {partial_answer}\n"
             "Produce the JSON with both the nested word suggestions and the three styled full-sentence options.",

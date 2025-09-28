@@ -79,6 +79,7 @@ def create_app() -> FastAPI:
                 result = await service.apredict_next_words(
                     question=payload.question,
                     partial_answer=payload.partial_answer,
+                    conversation=payload.conversation,
                     suggestions_count=payload.suggestions_count,
                 )
                 break

@@ -38,15 +38,18 @@ class AutocompleteService:
         *,
         question: str,
         partial_answer: str,
+        conversation: str = "",
         suggestions_count: int | None = None,
     ) -> dict[str, list]:
         """Predict the next-word suggestion tree synchronously."""
         count = suggestions_count or self.settings.suggestions_count
+        conversation_context = conversation.strip() or "(none)"
         try:
             payload = self._chain.invoke(
                 {
                     "question": question.strip(),
                     "partial_answer": partial_answer.strip(),
+                    "conversation": conversation_context,
                     "suggestions_count": count,
                 }
             )
@@ -63,15 +66,18 @@ class AutocompleteService:
         *,
         question: str,
         partial_answer: str,
+        conversation: str = "",
         suggestions_count: int | None = None,
     ) -> dict[str, list]:
         """Predict the next-word suggestion tree asynchronously."""
         count = suggestions_count or self.settings.suggestions_count
+        conversation_context = conversation.strip() or "(none)"
         try:
             payload = await self._chain.ainvoke(
                 {
                     "question": question.strip(),
                     "partial_answer": partial_answer.strip(),
+                    "conversation": conversation_context,
                     "suggestions_count": count,
                 }
             )

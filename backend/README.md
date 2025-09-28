@@ -43,12 +43,12 @@ This FastAPI service wraps a LangChain pipeline that suggests next-word candidat
    The server exposes two endpoints:
 
    - `GET /health` — simple readiness probe
-   - `POST /suggest` — accepts JSON payload `{ "question": "…", "partial_answer": "…", "suggestions_count": 5 }`
+  - `POST /suggest` — accepts JSON payload `{ "question": "…", "partial_answer": "…", "conversation": "guest: …\nuser: …", "suggestions_count": 5 }`
 
 ## How it Works
 
 1. The request payload is validated with Pydantic models.
-2. `AutocompleteService` injects the question, partial answer, and requested count into a LangChain `ChatPromptTemplate`.
+2. `AutocompleteService` injects the question, partial answer, conversation transcript, and requested count into a LangChain `ChatPromptTemplate`.
 3. `ChatOpenAI` generates candidate words while a `PydanticOutputParser` forces a structured JSON response.
 4. The service normalises results, removing blanks and duplicates before returning them to the caller.
 
@@ -95,4 +95,5 @@ pytest
 
 - The API enables CORS for all origins to simplify local development with Vite/React.
 - Each subsequent word selection should call `POST /suggest` with the updated `partial_answer` string.
+- Include the running conversation as newline-separated `role: text` lines in the optional `conversation` field so the LLM can stay in-context.
 - The service returns words in ranked order; the frontend can display them left-to-right from highest to lowest likelihood.

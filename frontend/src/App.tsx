@@ -69,6 +69,11 @@ type KeyboardGridOption = {
   indexInKeyboard: number;
 };
 
+type ConversationEntry = {
+  role: "guest" | "user";
+  text: string;
+};
+
 type NavigatorGridOption =
   | { type: "sentence"; style: string; text: string }
   | { type: "word"; label: string }
@@ -267,6 +272,7 @@ export default function FaceLandmarkerApp() {
   const [sentenceViewportColumns, setSentenceViewportColumns] = useState<number>(() =>
     getSentenceViewportColumns()
   );
+  const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([]);
 
   const columns = Math.min(3, Math.max(1, navigatorOptions.length));
   const handleKeyboardToggle = useCallback(() => {
@@ -1024,6 +1030,14 @@ export default function FaceLandmarkerApp() {
       return;
     }
 
+    setConversationHistory((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === "user" && last.text === spoken) {
+        return prev;
+      }
+      return [...prev, { role: "user", text: spoken }];
+    });
+
     if (submitFlashTimeoutRef.current !== null) {
       window.clearTimeout(submitFlashTimeoutRef.current);
     }
@@ -1193,6 +1207,22 @@ export default function FaceLandmarkerApp() {
 
       try {
         const partialAnswer = trimmedResponse;
+        let updatedHistory = conversationHistory;
+        if (questionText) {
+          const lastEntry = conversationHistory[conversationHistory.length - 1];
+          if (!lastEntry || lastEntry.role !== "guest" || lastEntry.text !== questionText) {
+            updatedHistory = [...conversationHistory, { role: "guest", text: questionText }];
+            setConversationHistory(updatedHistory);
+          }
+        }
+        const conversationContext = updatedHistory
+          .map((entry) => `${entry.role}: ${entry.text}`)
+          .join("\n");
+        console.log("[Suggestions] Request payload", {
+          question: questionText,
+          partialAnswer,
+          conversation: conversationContext,
+        });
         const response = await fetch(SUGGEST_ENDPOINT, {
           method: "POST",
           headers: {
@@ -1201,6 +1231,7 @@ export default function FaceLandmarkerApp() {
           body: JSON.stringify({
             question: questionText,
             partial_answer: partialAnswer,
+            conversation: conversationContext,
             suggestions_count: 5,
           }),
         });
@@ -1320,6 +1351,7 @@ export default function FaceLandmarkerApp() {
     transcript,
     trimmedResponse,
     typedBuffer,
+    conversationHistory,
   ]);
 
   useEffect(() => {
@@ -1595,6 +1627,7 @@ export default function FaceLandmarkerApp() {
       await loadModel();
     }
     await startCamera();
+    setConversationHistory([]);
     resetNavigator();
     setIsRunning(true);
     startTranscription();
@@ -1608,6 +1641,7 @@ export default function FaceLandmarkerApp() {
     stopTranscription();
     setIsRunning(false);
     resetNavigator();
+    setConversationHistory([]);
   }, [resetNavigator, stopCamera, stopTranscription]);
 
   useEffect(() => {
