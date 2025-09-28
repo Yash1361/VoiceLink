@@ -401,7 +401,7 @@ export default function FaceLandmarkerApp() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Sparkles className="w-8 h-8" />
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Face Landmarks — Webcam</h1>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">VoiceLink</h1>
         </div>
         <div className="flex items-center gap-3 ml-auto">
           <span className="text-sm opacity-70 hidden sm:inline">Powered by MediaPipe Tasks Vision</span>
