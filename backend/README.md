@@ -25,14 +25,14 @@ This FastAPI service wraps a LangChain pipeline that suggests next-word candidat
 
    ```bash
    cp .env.example .env
-   # edit .env and paste your OpenAI API key
+   # edit .env and set your Google Gemini credentials
    ```
 
-   | Variable            | Description                                           | Default       |
-   | ------------------- | ----------------------------------------------------- | ------------- |
-   | `OPENAI_API_KEY`    | Required OpenAI key used by `ChatOpenAI`.             | —             |
-   | `OPENAI_MODEL`      | Chat model identifier.                                | `gpt-4o-mini` |
-   | `SUGGESTIONS_COUNT` | Default number of suggestions if the client omits it. | `5`           |
+   | Variable            | Description                                                   | Default            |
+   | ------------------- | ------------------------------------------------------------- | ------------------ |
+   | `GOOGLE_API_KEY`    | Required key with access to the Gemini models listed below.   | —                  |
+   | `GEMINI_MODEL`      | Preferred Gemini model short name (e.g. `gemini-2.5-pro`).    | `gemini-2.5-flash` |
+   | `SUGGESTIONS_COUNT` | Default number of top-level suggestions if the client omits it.| `5`                |
 
 3. **Run the API server**
 
@@ -51,6 +51,37 @@ This FastAPI service wraps a LangChain pipeline that suggests next-word candidat
 2. `AutocompleteService` injects the question, partial answer, and requested count into a LangChain `ChatPromptTemplate`.
 3. `ChatOpenAI` generates candidate words while a `PydanticOutputParser` forces a structured JSON response.
 4. The service normalises results, removing blanks and duplicates before returning them to the caller.
+
+## Expose the API with ngrok
+
+The repository ships with a helper script that boots the FastAPI server and creates an HTTPS tunnel using ngrok.
+
+1. Install the extra dependency:
+
+   ```bash
+   pip install -r requirements.txt  # ensures pyngrok is available
+   ```
+
+2. Set your ngrok auth token (once per machine):
+
+   ```bash
+   # Replace XXX with the token from https://dashboard.ngrok.com/get-started/your-authtoken
+   export NGROK_AUTHTOKEN=XXX
+   ```
+
+   Optional environment variables:
+
+   - `NGROK_REGION` — override the default region (e.g. `us`, `eu`).
+   - `APP_PORT` — change the uvicorn port (defaults to 8000).
+   - `APP_RELOAD` — set to `true` for auto-reload during development.
+
+3. Launch the combined server + tunnel from the `backend/` directory:
+
+   ```bash
+   python scripts/run_with_ngrok.py
+   ```
+
+   The script prints a public HTTPS URL (e.g. `https://abc123.ngrok-free.app`) that forwards requests to your local FastAPI service. Hit that URL’s `/health` or `/suggest` endpoints from remote clients to test the deployment.
 
 ## Testing
 
