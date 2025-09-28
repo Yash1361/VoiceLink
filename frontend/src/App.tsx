@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Camera, CameraOff, Sparkles, Activity, Play, Pause, X, Cpu } from "lucide-react";
+import { Camera, CameraOff, Sparkles, Activity, Play, Pause, X, Cpu, CheckCircle, AlertCircle } from "lucide-react";
 import { useBlendshapeGestures } from "./hooks/useGesture";
 import Keyboard, { LETTERS, SPECIAL_KEYS } from "./components/keyboard";
 import { ask, AGENT_ID } from "./utils/asiAI";
@@ -105,6 +105,8 @@ type AgentMailPreview = {
   received: string;
 };
 
+type AgentMailStep = "recipient" | "subject" | "body" | "result";
+
 type DuckResult = {
   title: string;
   url: string;
@@ -148,6 +150,51 @@ const SAMPLE_AGENTMAIL_INBOX: AgentMailPreview[] = [
     preview: "The next meetup is this Saturday. Let us know if you'll join in person or virtually.",
     received: "Tue · 6:41 PM",
   },
+];
+
+const DEFAULT_AGENTMAIL_RECIPIENT = "kevinlobo327@gmail.com";
+
+const AGENT_MAIL_RECIPIENT_OPTIONS = [
+  { label: "Kevin Lobo", value: "kevinlobo327@gmail.com" },
+  { label: "Yash Aggarwal", value: "yash1361@icloud.com" },
+  { label: "VoiceLink Care", value: "care@voicelink.ai" },
+  { label: "Community Support", value: "support@communitycare.org" },
+] as const;
+
+const AGENT_MAIL_SUBJECT_OPTIONS = [
+  {
+    label: "Quick project update",
+    value: "Quick project update",
+    bodySuggestions: [
+      "Thanks for the latest details. Everything looks on track from my side.",
+      "Sharing a quick status note—no blockers, moving ahead as planned.",
+      "Appreciate the update! I'll keep the team posted and follow up tomorrow.",
+    ],
+  },
+  {
+    label: "Scheduling our next session",
+    value: "Scheduling our next session",
+    bodySuggestions: [
+      "Does Thursday at 2 PM work for you? Happy to adjust if needed.",
+      "I'm free later this week—let me know a time that fits your schedule.",
+      "Looking forward to the next session. Suggesting Tuesday afternoon if that helps.",
+    ],
+  },
+  {
+    label: "Thanks for the update",
+    value: "Thanks for the update",
+    bodySuggestions: [
+      "Really appreciate the insight. I'll review and get back shortly.",
+      "Thanks for looping me in—this helps me plan the next steps.",
+      "Great notes! I'll circle back with any follow-up questions soon.",
+    ],
+  },
+] as const;
+
+const AGENT_MAIL_DEFAULT_BODY_SUGGESTIONS = [
+  "Thanks for the update—I'll review and respond soon.",
+  "Appreciate the quick note. I'll follow up with next steps shortly.",
+  "Let me know if there's anything else you'd like me to cover.",
 ];
 
 const DEFAULT_DDG_RESULTS: DuckResult[] = [
@@ -273,6 +320,7 @@ const COMMON_WORDS = [
   "who",
   "get",
   "which",
+  "hackathon",
   "go",
   "me",
   "when",
@@ -377,9 +425,27 @@ export default function FaceLandmarkerApp() {
   const [isAgentSelectionView, setIsAgentSelectionView] = useState(true);
   const [agentCurrentIndex, setAgentCurrentIndex] = useState(0);
   const [activeAgent, setActiveAgent] = useState<AgentId>(DEFAULT_AGENT_ID);
-  const [agentMailDraft, setAgentMailDraft] = useState({ to: "", subject: "", body: "" });
+  const [agentMailDraft, setAgentMailDraft] = useState({
+    to: DEFAULT_AGENTMAIL_RECIPIENT,
+    subject: "",
+    body: "",
+  });
   const [agentMailActivity, setAgentMailActivity] = useState<AgentMailActivity[]>([]);
   const [agentMailFocusIndex, setAgentMailFocusIndex] = useState(0);
+  const [agentMailStep, setAgentMailStep] = useState<AgentMailStep>("recipient");
+  const [agentMailBodyQuickOptions, setAgentMailBodyQuickOptions] = useState<string[]>([
+    ...AGENT_MAIL_SUBJECT_OPTIONS[0].bodySuggestions,
+  ]);
+  const [agentMailLastSubmission, setAgentMailLastSubmission] = useState<{ to: string; subject: string }>(
+    {
+      to: DEFAULT_AGENTMAIL_RECIPIENT,
+      subject: "",
+    }
+  );
+  const [agentMailResult, setAgentMailResult] = useState<{ status: "idle" | "success" | "error"; message?: string }>(
+    { status: "idle" }
+  );
+  const [isAgentMailSending, setIsAgentMailSending] = useState(false);
   const [duckSearchQuery, setDuckSearchQuery] = useState("AI");
   const [duckSearchResults, setDuckSearchResults] = useState<DuckResult[]>(DEFAULT_DDG_RESULTS);
   const [duckSummary, setDuckSummary] = useState(DEFAULT_DDG_SUMMARY);
@@ -759,35 +825,47 @@ export default function FaceLandmarkerApp() {
     [isKeyboardOpen, keyboardOptions, navigatorOptions, sentenceSuggestions, trimmedResponse]
   );
 
-  const agentMailFocusOrder = useMemo(() => ["to", "subject", "body", "send"] as const, []);
   const duckFocusOrder = useMemo(() => ["query", "run", "reset"] as const, []);
+
+  const agentMailFocusTargets = useMemo<string[]>(() => {
+    switch (agentMailStep) {
+      case "recipient":
+        return ["recipientInput", "next"];
+      case "subject":
+        return ["subjectInput", "next"];
+      case "body":
+        return ["bodyInput", "send"];
+      case "result":
+        return ["result"];
+      default:
+        return ["recipientInput", "next"];
+    }
+  }, [agentMailStep]);
+
+  useEffect(() => {
+    setAgentMailFocusIndex((current) => {
+      if (agentMailFocusTargets.length === 0) {
+        return 0;
+      }
+      return Math.min(current, agentMailFocusTargets.length - 1);
+    });
+  }, [agentMailFocusTargets]);
+
+  const activeAgentMailFocus = agentMailFocusTargets[agentMailFocusIndex] ?? agentMailFocusTargets[0] ?? null;
 
   const agentKeyboardSuggestions = useMemo(() => {
     if (isAgentSelectionView) {
       return [] as string[];
     }
     if (activeAgent === "agentmail") {
-      const focus = agentMailFocusOrder[agentMailFocusIndex];
-      if (focus === "to") {
-        return [
-          "care@voicelink.ai",
-          "support@example.com",
-          "teammate@agentmail.to",
-        ];
+      if (agentMailStep === "recipient") {
+        return AGENT_MAIL_RECIPIENT_OPTIONS.map((option) => option.value);
       }
-      if (focus === "subject") {
-        return [
-          "Quick follow-up",
-          "Thanks for the update",
-          "Scheduling next steps",
-        ];
+      if (agentMailStep === "subject") {
+        return AGENT_MAIL_SUBJECT_OPTIONS.map((option) => option.value);
       }
-      if (focus === "body") {
-        return [
-          "Appreciate the detailed notes—I'll circle back shortly.",
-          "Let's connect later today to review the summary.",
-          "Thanks! I can confirm and move ahead from here.",
-        ];
+      if (agentMailStep === "body") {
+        return agentMailBodyQuickOptions;
       }
     }
     if (activeAgent === "duckduckgo") {
@@ -803,14 +881,30 @@ export default function FaceLandmarkerApp() {
     return [] as string[];
   }, [
     activeAgent,
-    agentMailFocusIndex,
-    agentMailFocusOrder,
+    agentMailBodyQuickOptions,
+    agentMailStep,
     duckFocusIndex,
     duckFocusOrder,
     isAgentSelectionView,
   ]);
 
-  const totalAgentKeyboardOptions = agentKeyboardSuggestions.length + LETTERS.length + SPECIAL_KEYS.length;
+  const agentMailSpecialKeys = useMemo(() => {
+    const base = [
+      { label: "Space", value: "Space" },
+      { label: "Backspace", value: "Backspace" },
+    ];
+    if (agentMailStep === "body") {
+      return [...base, { label: "Send email", value: "Enter" }];
+    }
+    if (agentMailStep === "result") {
+      return [...base, { label: "Close", value: "Enter" }];
+    }
+    return [...base, { label: "Next", value: "Enter" }];
+  }, [agentMailStep]);
+
+  const activeSpecialKeys = activeAgent === "agentmail" ? agentMailSpecialKeys : SPECIAL_KEYS;
+
+  const totalAgentKeyboardOptions = agentKeyboardSuggestions.length + LETTERS.length + activeSpecialKeys.length;
 
   useEffect(() => {
     if (!isAgentKeyboardOpen) {
@@ -834,15 +928,38 @@ export default function FaceLandmarkerApp() {
     [activeAgent]
   );
 
+  const advanceAgentMailStep = useCallback((nextStep: AgentMailStep) => {
+    setAgentMailStep(nextStep);
+    setAgentMailFocusIndex(0);
+    if (nextStep !== "result") {
+      setAgentMailResult({ status: "idle" });
+    }
+  }, []);
+
   const handleAgentSuggestionClick = useCallback(
     (word: string) => {
       if (isAgentSelectionView) {
         return;
       }
       if (activeAgent === "agentmail") {
-        const focus = agentMailFocusOrder[agentMailFocusIndex];
-        if (focus === "to" || focus === "subject" || focus === "body") {
-          applyAgentMailValue(focus, word);
+        if (agentMailStep === "recipient") {
+          applyAgentMailValue("to", word);
+          advanceAgentMailStep("subject");
+          return;
+        }
+        if (agentMailStep === "subject") {
+          applyAgentMailValue("subject", word);
+          const match = AGENT_MAIL_SUBJECT_OPTIONS.find(
+            (option) => option.value.toLowerCase() === word.toLowerCase()
+          );
+          setAgentMailBodyQuickOptions([
+            ...(match?.bodySuggestions ?? AGENT_MAIL_DEFAULT_BODY_SUGGESTIONS),
+          ]);
+          advanceAgentMailStep("body");
+          return;
+        }
+        if (agentMailStep === "body") {
+          applyAgentMailValue("body", word);
         }
         return;
       }
@@ -856,12 +973,12 @@ export default function FaceLandmarkerApp() {
     },
     [
       activeAgent,
-      agentMailFocusIndex,
-      agentMailFocusOrder,
+      agentMailStep,
       applyAgentMailValue,
       duckFocusIndex,
       duckFocusOrder,
       isAgentSelectionView,
+      advanceAgentMailStep,
     ]
   );
 
@@ -882,6 +999,9 @@ export default function FaceLandmarkerApp() {
         setAgentKeyboardValue("");
         setIsAgentKeyboardOpen(false);
         setAgentKeyboardSelection(0);
+        setAgentMailStep("recipient");
+        setAgentMailBodyQuickOptions([...AGENT_MAIL_SUBJECT_OPTIONS[0].bodySuggestions]);
+        setAgentMailResult({ status: "idle" });
       }
       if (!next) {
         setIsAgentSelectionView(true);
@@ -902,7 +1022,35 @@ export default function FaceLandmarkerApp() {
     setAgentKeyboardValue("");
     setIsAgentKeyboardOpen(false);
     setAgentKeyboardSelection(0);
+    setAgentMailStep("recipient");
+    setAgentMailBodyQuickOptions([...AGENT_MAIL_SUBJECT_OPTIONS[0].bodySuggestions]);
+    setAgentMailResult({ status: "idle" });
   }, []);
+
+  useEffect(() => {
+    if (activeAgent !== "agentmail" || isAgentSelectionView) {
+      return;
+    }
+
+    if (agentMailStep === "recipient") {
+      setAgentKeyboardValue(agentMailDraft.to);
+    } else if (agentMailStep === "subject") {
+      setAgentKeyboardValue(agentMailDraft.subject);
+    } else if (agentMailStep === "body") {
+      setAgentKeyboardValue(agentMailDraft.body);
+    } else {
+      setAgentKeyboardValue("");
+    }
+
+    setIsAgentKeyboardOpen(true);
+  }, [
+    activeAgent,
+    agentMailDraft.body,
+    agentMailDraft.subject,
+    agentMailDraft.to,
+    agentMailStep,
+    isAgentSelectionView,
+  ]);
 
   const handleAgentKeyboardToggle = useCallback(() => {
     if (isAgentSelectionView) {
@@ -931,11 +1079,18 @@ export default function FaceLandmarkerApp() {
       if (activeAgent === "agentmail") {
         const step = direction === "Left" || direction === "Up" ? -1 : 1;
         setAgentMailFocusIndex((current) => {
-          const total = agentMailFocusOrder.length;
+          const total = agentMailFocusTargets.length;
+          if (total === 0) {
+            return 0;
+          }
           const next = (current + step + total) % total;
-          const focus = agentMailFocusOrder[next];
-          if (focus === "to" || focus === "subject" || focus === "body") {
-            setAgentKeyboardValue(agentMailDraft[focus]);
+          const focus = agentMailFocusTargets[next];
+          if (focus === "recipientInput") {
+            setAgentKeyboardValue(agentMailDraft.to);
+          } else if (focus === "subjectInput") {
+            setAgentKeyboardValue(agentMailDraft.subject);
+          } else if (focus === "bodyInput") {
+            setAgentKeyboardValue(agentMailDraft.body);
           } else {
             setAgentKeyboardValue("");
           }
@@ -962,7 +1117,7 @@ export default function FaceLandmarkerApp() {
     [
       activeAgent,
       agentMailDraft,
-      agentMailFocusOrder,
+      agentMailFocusTargets,
       agentOptions.length,
       duckFocusOrder,
       duckSearchQuery,
@@ -970,18 +1125,27 @@ export default function FaceLandmarkerApp() {
     ]
   );
 
-  const handleAgentMailSend = useCallback(() => {
+  const handleAgentMailSend = useCallback(async () => {
+    if (isAgentMailSending) {
+      return;
+    }
+
     const trimmedTo = agentMailDraft.to.trim();
     const trimmedSubject = agentMailDraft.subject.trim();
     const trimmedBody = agentMailDraft.body.trim();
-    const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
     if (!trimmedTo || !trimmedSubject || !trimmedBody) {
+      console.warn("[AgentMail] Missing required fields", {
+        to: trimmedTo,
+        subject: trimmedSubject,
+        bodyLength: trimmedBody.length,
+      });
+      const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       setAgentMailActivity((current) => {
         const entry: AgentMailActivity = {
           id: `warn-${Date.now()}`,
           timestamp,
-          message: "Fill in all fields to simulate sending an email.",
+          message: "Fill in all fields to send an email with AgentMail.",
           tone: "warning",
         };
         return [entry, ...current].slice(0, 6);
@@ -989,21 +1153,125 @@ export default function FaceLandmarkerApp() {
       return;
     }
 
-    setAgentMailActivity((current) => {
-      const entry: AgentMailActivity = {
-        id: `info-${Date.now()}`,
-        timestamp,
-        message: `Queued email to ${trimmedTo} with subject "${trimmedSubject}" (simulation).`,
-        tone: "info",
+    setIsAgentMailSending(true);
+
+    try {
+      const htmlBody = trimmedBody ? `<p>${trimmedBody.replace(/\n/g, "<br>")}</p>` : undefined;
+
+      const requestPayload = {
+        to: trimmedTo,
+        subject: trimmedSubject,
+        textLength: trimmedBody.length,
       };
-      return [entry, ...current].slice(0, 6);
-    });
-    setAgentMailDraft({ to: "", subject: "", body: "" });
-    if (activeAgent === "agentmail") {
-      setAgentMailFocusIndex(0);
-      setAgentKeyboardValue("");
+      console.log("[AgentMail] Sending email", requestPayload);
+
+      const response = await fetch("/agentmail/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: trimmedTo,
+          subject: trimmedSubject,
+          text: trimmedBody,
+          html: htmlBody,
+        }),
+      });
+
+      let responseData: { success?: boolean; message?: string } | null = null;
+      try {
+        responseData = await response.json();
+      } catch (parseError) {
+        console.warn("[AgentMail] Unable to parse response JSON", parseError);
+      }
+
+      if (!response.ok || !responseData?.success) {
+        const errorMessage = responseData?.message ?? `HTTP ${response.status}`;
+        console.error("[AgentMail] Send failed", errorMessage);
+        throw new Error(errorMessage);
+      }
+
+      console.log("[AgentMail] Email sent", {
+        to: trimmedTo,
+        subject: trimmedSubject,
+      });
+
+      const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      setAgentMailActivity((current) => {
+        const entry: AgentMailActivity = {
+          id: `info-${Date.now()}`,
+          timestamp,
+          message: `Sent email to ${trimmedTo} with subject "${trimmedSubject}".`,
+          tone: "info",
+        };
+        return [entry, ...current].slice(0, 6);
+      });
+      setAgentMailLastSubmission({ to: trimmedTo, subject: trimmedSubject });
+      setAgentMailResult({ status: "success" });
+      advanceAgentMailStep("result");
+      setAgentMailDraft({ to: DEFAULT_AGENTMAIL_RECIPIENT, subject: "", body: "" });
+      setAgentMailBodyQuickOptions([...AGENT_MAIL_SUBJECT_OPTIONS[0].bodySuggestions]);
+    } catch (error) {
+      console.error("AgentMail send failed", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setAgentMailLastSubmission({ to: trimmedTo, subject: trimmedSubject });
+      setAgentMailResult({ status: "error", message: errorMessage });
+      advanceAgentMailStep("result");
+      const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      setAgentMailActivity((current) => {
+        const entry: AgentMailActivity = {
+          id: `warn-${Date.now()}`,
+          timestamp,
+          message: `Failed to send email: ${errorMessage}`,
+          tone: "warning",
+        };
+        return [entry, ...current].slice(0, 6);
+      });
+    } finally {
+      setIsAgentMailSending(false);
     }
-  }, [activeAgent, agentMailDraft]);
+  }, [advanceAgentMailStep, agentMailDraft, isAgentMailSending]);
+
+  const goToNextAgentMailStep = useCallback(() => {
+    if (agentMailStep === "recipient") {
+      if (!agentMailDraft.to.trim()) {
+        console.warn("[AgentMail] Recipient missing before advancing");
+        return false;
+      }
+      advanceAgentMailStep("subject");
+      return true;
+    }
+    if (agentMailStep === "subject") {
+      const trimmedSubject = agentMailDraft.subject.trim();
+      if (!trimmedSubject) {
+        console.warn("[AgentMail] Subject missing before advancing");
+        return false;
+      }
+      const match = AGENT_MAIL_SUBJECT_OPTIONS.find(
+        (option) => option.value.toLowerCase() === trimmedSubject.toLowerCase()
+      );
+      setAgentMailBodyQuickOptions([
+        ...(match?.bodySuggestions ?? AGENT_MAIL_DEFAULT_BODY_SUGGESTIONS),
+      ]);
+      advanceAgentMailStep("body");
+      return true;
+    }
+    if (agentMailStep === "body") {
+      handleAgentMailSend();
+      return true;
+    }
+    if (agentMailStep === "result") {
+      advanceAgentMailStep("recipient");
+      return true;
+    }
+    return false;
+  }, [
+    advanceAgentMailStep,
+    agentMailDraft.subject,
+    agentMailDraft.to,
+    agentMailStep,
+    handleAgentMailSend,
+  ]);
 
   const handleDuckSearch = useCallback(
     (event?: React.FormEvent<HTMLFormElement>) => {
@@ -1050,8 +1318,8 @@ export default function FaceLandmarkerApp() {
       setActiveAgent(option.id);
       setIsAgentSelectionView(false);
       if (option.id === "agentmail") {
-        setAgentMailFocusIndex(0);
-        setAgentKeyboardValue(agentMailDraft.to);
+        setAgentMailBodyQuickOptions([...AGENT_MAIL_SUBJECT_OPTIONS[0].bodySuggestions]);
+        advanceAgentMailStep("recipient");
       } else {
         setDuckFocusIndex(0);
         setAgentKeyboardValue(duckSearchQuery);
@@ -1061,19 +1329,7 @@ export default function FaceLandmarkerApp() {
     }
 
     if (activeAgent === "agentmail") {
-      const focus = agentMailFocusOrder[agentMailFocusIndex];
-      if (focus === "send") {
-        handleAgentMailSend();
-        return;
-      }
-      const nextIndex = (agentMailFocusIndex + 1) % agentMailFocusOrder.length;
-      setAgentMailFocusIndex(nextIndex);
-      const nextFocus = agentMailFocusOrder[nextIndex];
-      if (nextFocus === "to" || nextFocus === "subject" || nextFocus === "body") {
-        setAgentKeyboardValue(agentMailDraft[nextFocus]);
-      } else {
-        setAgentKeyboardValue("");
-      }
+      goToNextAgentMailStep();
       return;
     }
 
@@ -1100,8 +1356,7 @@ export default function FaceLandmarkerApp() {
     activeAgent,
     agentCurrentIndex,
     agentMailDraft,
-    agentMailFocusIndex,
-    agentMailFocusOrder,
+    agentMailStep,
     agentOptions,
     duckFocusIndex,
     duckFocusOrder,
@@ -1109,6 +1364,7 @@ export default function FaceLandmarkerApp() {
     handleAgentMailSend,
     handleDuckReset,
     handleDuckSearch,
+    goToNextAgentMailStep,
     isAgentSelectionView,
   ]);
 
@@ -1116,31 +1372,39 @@ export default function FaceLandmarkerApp() {
     (field: "to" | "subject" | "body", value: string) => {
       setAgentMailDraft((draft) => ({ ...draft, [field]: value }));
       if (!isAgentSelectionView && activeAgent === "agentmail") {
-        const focus = agentMailFocusOrder[agentMailFocusIndex];
-        if (focus === field) {
+        const focus = activeAgentMailFocus;
+        if (
+          (field === "to" && focus === "recipientInput") ||
+          (field === "subject" && focus === "subjectInput") ||
+          (field === "body" && focus === "bodyInput")
+        ) {
           setAgentKeyboardValue(value);
         }
       }
     },
-    [activeAgent, agentMailFocusIndex, agentMailFocusOrder, isAgentSelectionView]
+    [activeAgent, activeAgentMailFocus, isAgentSelectionView]
   );
 
   const handleDuckResultSelect = useCallback((result: DuckResult) => {
     setDuckSummary(result.snippet);
   }, []);
 
-  const focusAgentMailField = useCallback(
-    (field: "to" | "subject" | "body" | "send") => {
-      const index = agentMailFocusOrder.indexOf(field);
+  const focusAgentMailTarget = useCallback(
+    (target: "recipientInput" | "subjectInput" | "bodyInput" | "next" | "send" | "result") => {
+      const index = agentMailFocusTargets.indexOf(target);
       if (index === -1) return;
       setAgentMailFocusIndex(index);
-      if (field === "to" || field === "subject" || field === "body") {
-        setAgentKeyboardValue(agentMailDraft[field]);
+      if (target === "recipientInput") {
+        setAgentKeyboardValue(agentMailDraft.to);
+      } else if (target === "subjectInput") {
+        setAgentKeyboardValue(agentMailDraft.subject);
+      } else if (target === "bodyInput") {
+        setAgentKeyboardValue(agentMailDraft.body);
       } else {
         setAgentKeyboardValue("");
       }
     },
-    [agentMailDraft, agentMailFocusOrder]
+    [agentMailDraft.body, agentMailDraft.subject, agentMailDraft.to, agentMailFocusTargets]
   );
 
   const focusDuckSection = useCallback(
@@ -1164,26 +1428,36 @@ export default function FaceLandmarkerApp() {
       }
 
       if (activeAgent === "agentmail") {
-        const focus = agentMailFocusOrder[agentMailFocusIndex];
-        if (focus !== "to" && focus !== "subject" && focus !== "body") {
+        const focus = activeAgentMailFocus;
+        const isRecipient = focus === "recipientInput";
+        const isSubject = focus === "subjectInput";
+        const isBody = focus === "bodyInput";
+
+        if (!isRecipient && !isSubject && !isBody) {
           if (key === "Enter") {
-            handleAgentMailSend();
+            if (focus === "send") {
+              handleAgentMailSend();
+            } else {
+              goToNextAgentMailStep();
+            }
           }
           return;
         }
-        const currentValue = agentMailDraft[focus];
+
+        const field = isRecipient ? "to" : isSubject ? "subject" : "body";
+        const currentValue = agentMailDraft[field];
         let nextValue = currentValue;
         if (key === "Backspace") {
           nextValue = currentValue.slice(0, -1);
         } else if (key === "Space") {
           nextValue = `${currentValue} `;
         } else if (key === "Enter") {
-          handleAgentMailSend();
+          goToNextAgentMailStep();
           return;
         } else if (key.length === 1) {
           nextValue = `${currentValue}${key.toLowerCase()}`;
         }
-        applyAgentMailValue(focus, nextValue);
+        applyAgentMailValue(field, nextValue);
         return;
       }
 
@@ -1217,9 +1491,10 @@ export default function FaceLandmarkerApp() {
     },
     [
       activeAgent,
+      activeAgentMailFocus,
+      advanceAgentMailStep,
       agentMailDraft,
-      agentMailFocusIndex,
-      agentMailFocusOrder,
+      agentMailStep,
       applyAgentMailValue,
       duckFocusIndex,
       duckFocusOrder,
@@ -1227,6 +1502,7 @@ export default function FaceLandmarkerApp() {
       handleAgentMailSend,
       handleDuckReset,
       handleDuckSearch,
+      goToNextAgentMailStep,
       isAgentSelectionView,
     ]
   );
@@ -1246,9 +1522,12 @@ export default function FaceLandmarkerApp() {
       return;
     }
     if (activeAgent === "agentmail") {
-      const focus = agentMailFocusOrder[agentMailFocusIndex];
-      if (focus === "to" || focus === "subject" || focus === "body") {
-        setAgentKeyboardValue(agentMailDraft[focus]);
+      if (activeAgentMailFocus === "recipientInput") {
+        setAgentKeyboardValue(agentMailDraft.to);
+      } else if (activeAgentMailFocus === "subjectInput") {
+        setAgentKeyboardValue(agentMailDraft.subject);
+      } else if (activeAgentMailFocus === "bodyInput") {
+        setAgentKeyboardValue(agentMailDraft.body);
       } else {
         setAgentKeyboardValue("");
       }
@@ -1262,9 +1541,10 @@ export default function FaceLandmarkerApp() {
     }
   }, [
     activeAgent,
-    agentMailDraft,
-    agentMailFocusIndex,
-    agentMailFocusOrder,
+    activeAgentMailFocus,
+    agentMailDraft.body,
+    agentMailDraft.subject,
+    agentMailDraft.to,
     duckFocusIndex,
     duckFocusOrder,
     duckSearchQuery,
@@ -1792,65 +2072,298 @@ export default function FaceLandmarkerApp() {
   }, []);
 
   const renderAgentMailPanel = () => {
-    const focus = agentMailFocusOrder[agentMailFocusIndex];
-    const fieldClasses = (field: "to" | "subject" | "body") =>
-      `mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-800 shadow-inner focus:outline-none focus:ring-2 ${
-        focus === field
-          ? "border-emerald-400 focus:border-emerald-400 focus:ring-emerald-100"
-          : "border-slate-200 focus:border-emerald-200 focus:ring-emerald-50"
-      }`;
-    const sendButtonClasses =
-      focus === "send"
-        ? "inline-flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm"
-        : "inline-flex items-center justify-center rounded-lg border border-transparent bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700";
+    const steps = [
+      { id: "recipient" as const, label: "Recipient" },
+      { id: "subject" as const, label: "Subject" },
+      { id: "body" as const, label: "Message" },
+    ];
+
+    const activeStepIndex = agentMailStep === "result"
+      ? steps.length - 1
+      : steps.findIndex((step) => step.id === agentMailStep);
+
+    if (agentMailStep === "result") {
+      const isSuccess = agentMailResult.status === "success";
+      const message = isSuccess
+        ? "Email sent successfully."
+        : agentMailResult.message ?? "We couldn't send the email.";
+
+      return (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
+          <div className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              {isSuccess ? (
+                <CheckCircle className="h-6 w-6 text-emerald-500" />
+              ) : (
+                <AlertCircle className="h-6 w-6 text-amber-500" />
+              )}
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  {isSuccess ? "Message sent" : "Something went wrong"}
+                </h3>
+                <p className="text-sm text-slate-600">{message}</p>
+              </div>
+            </div>
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                <div className="font-semibold text-slate-800">Summary</div>
+                <dl className="mt-3 space-y-2">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">To</dt>
+                  <dd className="text-sm text-slate-700">{agentMailLastSubmission.to}</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Subject</dt>
+                  <dd className="text-sm text-slate-700">{agentMailLastSubmission.subject || "Quick project update"}</dd>
+                  </div>
+                </dl>
+              </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setAgentMailDraft({ to: DEFAULT_AGENTMAIL_RECIPIENT, subject: "", body: "" });
+                  setAgentMailBodyQuickOptions([...AGENT_MAIL_SUBJECT_OPTIONS[0].bodySuggestions]);
+                  advanceAgentMailStep("recipient");
+                }}
+                onFocus={() => focusAgentMailTarget("result")}
+                className="inline-flex items-center justify-center rounded-lg border border-transparent bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+              >
+                Compose another
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  closeAgentPopup();
+                }}
+                onFocus={() => focusAgentMailTarget("result")}
+                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700">Recent activity</h3>
+              <div className="mt-3 space-y-2 max-h-64 overflow-auto pr-1">
+                {agentMailActivity.length === 0 ? (
+                  <p className="text-sm text-slate-500">Compose a draft or submit the form to see recent actions.</p>
+                ) : (
+                  agentMailActivity.map((entry) => {
+                    const toneClasses =
+                      entry.tone === "warning"
+                        ? "bg-amber-100 text-amber-800 border-amber-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-100";
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`rounded-xl border px-3 py-2 text-xs leading-relaxed ${toneClasses}`}
+                      >
+                        <div className="font-semibold">{entry.timestamp}</div>
+                        <div>{entry.message}</div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700">Sample inbox</h3>
+              <p className="text-xs text-slate-500">These records mirror what the AgentMail SDK would retrieve.</p>
+              <div className="mt-3 space-y-3 max-h-64 overflow-auto pr-1">
+                {SAMPLE_AGENTMAIL_INBOX.map((message) => (
+                  <div key={message.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold text-slate-500">{message.received}</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-800">{message.subject}</div>
+                    <div className="mt-1 text-xs text-slate-500">From {message.from}</div>
+                    <p className="mt-2 text-sm text-slate-600 leading-relaxed">{message.preview}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const stepCopy = (() => {
+      if (agentMailStep === "recipient") {
+        return {
+          title: "Who do you want to send it to?",
+          description: "Pick a quick contact or type an email address manually.",
+          placeholder: "recipient@example.com",
+          value: agentMailDraft.to,
+        };
+      }
+      if (agentMailStep === "subject") {
+        return {
+          title: "What's the subject?",
+          description: "Choose a summary line or craft your own.",
+          placeholder: "Subject line",
+          value: agentMailDraft.subject,
+        };
+      }
+      return {
+        title: "What do you want to say?",
+        description: "Use a quick reply or type your message below.",
+        placeholder: "Type your message here…",
+        value: agentMailDraft.body,
+      };
+    })();
+
+    const quickOptions: Array<{ label: string; value: string; helper?: string }> = (() => {
+      if (agentMailStep === "recipient") {
+        return AGENT_MAIL_RECIPIENT_OPTIONS.map((option) => ({
+          label: option.label,
+          value: option.value,
+          helper: option.value,
+        }));
+      }
+      if (agentMailStep === "subject") {
+        return AGENT_MAIL_SUBJECT_OPTIONS.map((option) => ({
+          label: option.label,
+          value: option.value,
+          helper: undefined,
+        }));
+      }
+      return agentMailBodyQuickOptions.map((option) => ({
+        label: option,
+        value: option,
+        helper: undefined,
+      }));
+    })();
+
+    const actionLabel = agentMailStep === "body"
+      ? isAgentMailSending
+        ? "Sending…"
+        : "Send email"
+      : "Next";
+    const actionDisabled = agentMailStep === "body"
+      ? isAgentMailSending || !agentMailDraft.body.trim()
+      : agentMailStep === "recipient"
+        ? !agentMailDraft.to.trim()
+        : !agentMailDraft.subject.trim();
+
+    const handleAction = () => {
+      if (agentMailStep === "body") {
+        handleAgentMailSend();
+      } else {
+        goToNextAgentMailStep();
+      }
+    };
+
+    const fieldIsActive =
+      (agentMailStep === "recipient" && activeAgentMailFocus === "recipientInput") ||
+      (agentMailStep === "subject" && activeAgentMailFocus === "subjectInput") ||
+      (agentMailStep === "body" && activeAgentMailFocus === "bodyInput");
+
+    const fieldBaseClasses = "w-full rounded-xl border px-4 py-3 text-sm text-slate-800 shadow-inner focus:outline-none focus:ring-2";
+    const focusedClasses = fieldIsActive
+      ? "border-emerald-400 focus:border-emerald-400 focus:ring-emerald-100"
+      : "border-slate-200 focus:border-emerald-200 focus:ring-emerald-50";
 
     return (
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
-        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">Compose preview</h3>
-            <p className="text-sm text-slate-600">This form simulates the AgentMail workflow locally—no email is actually sent.</p>
+        <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {steps.map((step, index) => {
+              const isActive = index === activeStepIndex;
+              const isCompleted = index < activeStepIndex;
+              return (
+                <div key={step.id} className="flex items-center gap-2">
+                  <div
+                    className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs ${
+                      isActive
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-600"
+                        : isCompleted
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-500"
+                          : "border-slate-300 bg-white text-slate-400"
+                    }`}
+                  >
+                    {index + 1}
+                  </div>
+                  <span className={isActive ? "text-emerald-600" : "text-slate-500"}>{step.label}</span>
+                  {index < steps.length - 1 && <span className="text-slate-300">/</span>}
+                </div>
+              );
+            })}
           </div>
-          <label className="block text-sm">
-            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">To</span>
-            <input
-              className={fieldClasses("to")}
-              placeholder="recipient@example.com"
-              value={agentMailDraft.to}
-              onChange={(event) => handleAgentMailDraftChange("to", event.target.value)}
-              onFocus={() => focusAgentMailField("to")}
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Subject</span>
-            <input
-              className={fieldClasses("subject")}
-              placeholder="Quick update from VoiceLink"
-              value={agentMailDraft.subject}
-              onChange={(event) => handleAgentMailDraftChange("subject", event.target.value)}
-              onFocus={() => focusAgentMailField("subject")}
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Message</span>
+
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">{stepCopy.title}</h3>
+            <p className="text-sm text-slate-600">{stepCopy.description}</p>
+          </div>
+
+          {agentMailStep === "body" ? (
             <textarea
-              className={`${fieldClasses("body")} h-32 resize-y leading-relaxed`}
-              placeholder="Thanks for the update! Looking forward to the next steps."
+              className={`${fieldBaseClasses} ${focusedClasses} h-36 resize-y leading-relaxed`}
+              placeholder={stepCopy.placeholder}
               value={agentMailDraft.body}
               onChange={(event) => handleAgentMailDraftChange("body", event.target.value)}
-              onFocus={() => focusAgentMailField("body")}
+              onFocus={() => focusAgentMailTarget("bodyInput")}
             />
-          </label>
+          ) : agentMailStep === "subject" ? (
+            <input
+              className={`${fieldBaseClasses} ${focusedClasses}`}
+              placeholder={stepCopy.placeholder}
+              value={agentMailDraft.subject}
+              onChange={(event) => handleAgentMailDraftChange("subject", event.target.value)}
+              onFocus={() => focusAgentMailTarget("subjectInput")}
+            />
+          ) : (
+            <input
+              className={`${fieldBaseClasses} ${focusedClasses}`}
+              placeholder={stepCopy.placeholder}
+              value={agentMailDraft.to}
+              onChange={(event) => handleAgentMailDraftChange("to", event.target.value)}
+              onFocus={() => focusAgentMailTarget("recipientInput")}
+            />
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {quickOptions.map((option) => {
+              const isSelected =
+                agentMailStep === "recipient"
+                  ? agentMailDraft.to.toLowerCase() === option.value.toLowerCase()
+                  : agentMailStep === "subject"
+                    ? agentMailDraft.subject.toLowerCase() === option.value.toLowerCase()
+                    : agentMailDraft.body.toLowerCase() === option.value.toLowerCase();
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleAgentSuggestionClick(option.value)}
+                  className={`rounded-lg border px-3 py-2 text-sm transition ${
+                    isSelected
+                      ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:border-emerald-200 hover:text-emerald-600"
+                  }`}
+                >
+                  <div className="font-semibold">{option.label}</div>
+                  {option.helper && (
+                    <div className="text-xs text-slate-500">{option.helper}</div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
           <button
             type="button"
-            onClick={() => {
-              focusAgentMailField("send");
-              handleAgentMailSend();
-            }}
-            onFocus={() => focusAgentMailField("send")}
-            className={sendButtonClasses}
+            onClick={handleAction}
+            onFocus={() => focusAgentMailTarget(agentMailStep === "body" ? "send" : "next")}
+            disabled={actionDisabled}
+            className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition ${
+              actionDisabled
+                ? "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
+                : agentMailStep === "body"
+                  ? "border border-transparent bg-emerald-600 text-white hover:bg-emerald-700"
+                  : "border border-transparent bg-emerald-500 text-white hover:bg-emerald-600"
+            }`}
           >
-            Simulate send
+            {actionLabel}
           </button>
         </div>
 
@@ -1859,7 +2372,7 @@ export default function FaceLandmarkerApp() {
             <h3 className="text-sm font-semibold text-slate-700">Recent activity</h3>
             <div className="mt-3 space-y-2 max-h-64 overflow-auto pr-1">
               {agentMailActivity.length === 0 ? (
-                <p className="text-sm text-slate-500">Compose a draft or submit the form to see simulated actions.</p>
+                <p className="text-sm text-slate-500">Compose a draft or send an email to view actions taken here.</p>
               ) : (
                 agentMailActivity.map((entry) => {
                   const toneClasses =
@@ -2104,12 +2617,14 @@ export default function FaceLandmarkerApp() {
 
             {!isAgentSelectionView && (
               <div className="mt-4">
-                <Keyboard
-                  onKeyPress={handleAgentKeyboardPress}
-                  suggestions={agentKeyboardSuggestions}
-                  currentInput={agentKeyboardValue}
-                  onSuggestionClick={handleAgentSuggestionClick}
-                />
+              <Keyboard
+                onKeyPress={handleAgentKeyboardPress}
+                suggestions={agentKeyboardSuggestions}
+                currentInput={agentKeyboardValue}
+                onSuggestionClick={handleAgentSuggestionClick}
+                selectionIndex={agentKeyboardSelection}
+                specialKeys={activeSpecialKeys}
+              />
               </div>
             )}
           </motion.div>

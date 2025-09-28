@@ -6,6 +6,7 @@ interface KeyboardProps {
   currentInput: string;
   onSuggestionClick?: (word: string) => void;
   selectionIndex?: number;
+  specialKeys?: ReadonlyArray<{ label: string; value: string }>;
 }
 
 export const LETTERS = [
@@ -25,14 +26,17 @@ export default function Keyboard({
   suggestions = [],
   currentInput,
   onSuggestionClick,
-  selectionIndex = -1, // default to no selection
+  selectionIndex = -1,
+  specialKeys = SPECIAL_KEYS,
 }: KeyboardProps) {
+  const quickOptions = suggestions;
+
   return (
     <div className="p-4 rounded-xl border bg-white shadow space-y-3">
       {/* Autocomplete Suggestions */}
-      {suggestions.length > 0 && (
+      {quickOptions.length > 0 && (
         <div className="flex gap-2 flex-wrap mb-2">
-          {suggestions.map((word, index) => {
+          {quickOptions.map((word, index) => {
             const isActive = index === selectionIndex;
             return (
               <button
@@ -59,7 +63,7 @@ export default function Keyboard({
       {/* Letters */}
       <div className="grid grid-cols-10 gap-2">
         {LETTERS.map((l, index) => {
-          const letterOffset = suggestions.length;
+          const letterOffset = quickOptions.length;
           const isActive = selectionIndex === letterOffset + index;
           return (
             <button
@@ -79,8 +83,8 @@ export default function Keyboard({
 
       {/* Space & Enter */}
       <div className="flex gap-2 mt-2">
-        {SPECIAL_KEYS.map((key, index) => {
-          const specialOffset = suggestions.length + LETTERS.length;
+        {specialKeys.map((key, index) => {
+          const specialOffset = quickOptions.length + LETTERS.length;
           const isActive = selectionIndex === specialOffset + index;
           const baseClasses = key.value === "Enter"
             ? "bg-emerald-500 hover:bg-emerald-600 text-white"
