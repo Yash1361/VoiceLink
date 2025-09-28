@@ -149,6 +149,8 @@ const SAMPLE_AGENTMAIL_INBOX: AgentMailPreview[] = [
   },
 ];
 
+const DEFAULT_AGENTMAIL_RECIPIENT = "kevinlobo327@gmail.com";
+
 const DEFAULT_DDG_RESULTS: DuckResult[] = [
   {
     title: "Artificial intelligence",
@@ -376,9 +378,14 @@ export default function FaceLandmarkerApp() {
   const [isAgentSelectionView, setIsAgentSelectionView] = useState(true);
   const [agentCurrentIndex, setAgentCurrentIndex] = useState(0);
   const [activeAgent, setActiveAgent] = useState<AgentId>(DEFAULT_AGENT_ID);
-  const [agentMailDraft, setAgentMailDraft] = useState({ to: "", subject: "", body: "" });
+  const [agentMailDraft, setAgentMailDraft] = useState({
+    to: DEFAULT_AGENTMAIL_RECIPIENT,
+    subject: "",
+    body: "",
+  });
   const [agentMailActivity, setAgentMailActivity] = useState<AgentMailActivity[]>([]);
   const [agentMailFocusIndex, setAgentMailFocusIndex] = useState(0);
+  const [isAgentMailSending, setIsAgentMailSending] = useState(false);
   const [duckSearchQuery, setDuckSearchQuery] = useState("AI");
   const [duckSearchResults, setDuckSearchResults] = useState<DuckResult[]>(DEFAULT_DDG_RESULTS);
   const [duckSummary, setDuckSummary] = useState(DEFAULT_DDG_SUMMARY);
@@ -860,18 +867,27 @@ export default function FaceLandmarkerApp() {
     ]
   );
 
-  const handleAgentMailSend = useCallback(() => {
+  const handleAgentMailSend = useCallback(async () => {
+    if (isAgentMailSending) {
+      return;
+    }
+
     const trimmedTo = agentMailDraft.to.trim();
     const trimmedSubject = agentMailDraft.subject.trim();
     const trimmedBody = agentMailDraft.body.trim();
-    const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
     if (!trimmedTo || !trimmedSubject || !trimmedBody) {
+      console.warn("[AgentMail] Missing required fields", {
+        to: trimmedTo,
+        subject: trimmedSubject,
+        bodyLength: trimmedBody.length,
+      });
+      const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       setAgentMailActivity((current) => {
         const entry: AgentMailActivity = {
           id: `warn-${Date.now()}`,
           timestamp,
-          message: "Fill in all fields to simulate sending an email.",
+          message: "Fill in all fields to send an email with AgentMail.",
           tone: "warning",
         };
         return [entry, ...current].slice(0, 6);
@@ -879,21 +895,82 @@ export default function FaceLandmarkerApp() {
       return;
     }
 
-    setAgentMailActivity((current) => {
-      const entry: AgentMailActivity = {
-        id: `info-${Date.now()}`,
-        timestamp,
-        message: `Queued email to ${trimmedTo} with subject "${trimmedSubject}" (simulation).`,
-        tone: "info",
+    setIsAgentMailSending(true);
+
+    try {
+      const htmlBody = trimmedBody ? `<p>${trimmedBody.replace(/\n/g, "<br>")}</p>` : undefined;
+
+      const requestPayload = {
+        to: trimmedTo,
+        subject: trimmedSubject,
+        textLength: trimmedBody.length,
       };
-      return [entry, ...current].slice(0, 6);
-    });
-    setAgentMailDraft({ to: "", subject: "", body: "" });
-    if (activeAgent === "agentmail") {
-      setAgentMailFocusIndex(0);
-      setAgentKeyboardValue("");
+      console.log("[AgentMail] Sending email", requestPayload);
+
+      const response = await fetch("/agentmail/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: trimmedTo,
+          subject: trimmedSubject,
+          text: trimmedBody,
+          html: htmlBody,
+        }),
+      });
+
+      let responseData: { success?: boolean; message?: string } | null = null;
+      try {
+        responseData = await response.json();
+      } catch (parseError) {
+        console.warn("[AgentMail] Unable to parse response JSON", parseError);
+      }
+
+      if (!response.ok || !responseData?.success) {
+        const errorMessage = responseData?.message ?? `HTTP ${response.status}`;
+        console.error("[AgentMail] Send failed", errorMessage);
+        throw new Error(errorMessage);
+      }
+
+      console.log("[AgentMail] Email sent", {
+        to: trimmedTo,
+        subject: trimmedSubject,
+      });
+
+      const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      setAgentMailActivity((current) => {
+        const entry: AgentMailActivity = {
+          id: `info-${Date.now()}`,
+          timestamp,
+          message: `Sent email to ${trimmedTo} with subject "${trimmedSubject}".`,
+          tone: "info",
+        };
+        return [entry, ...current].slice(0, 6);
+      });
+
+      setAgentMailDraft({ to: DEFAULT_AGENTMAIL_RECIPIENT, subject: "", body: "" });
+      if (activeAgent === "agentmail") {
+        setAgentMailFocusIndex(0);
+        setAgentKeyboardValue("");
+      }
+    } catch (error) {
+      console.error("AgentMail send failed", error);
+      const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setAgentMailActivity((current) => {
+        const entry: AgentMailActivity = {
+          id: `warn-${Date.now()}`,
+          timestamp,
+          message: `Failed to send email: ${errorMessage}`,
+          tone: "warning",
+        };
+        return [entry, ...current].slice(0, 6);
+      });
+    } finally {
+      setIsAgentMailSending(false);
     }
-  }, [activeAgent, agentMailDraft]);
+  }, [activeAgent, agentMailDraft, isAgentMailSending]);
 
   const handleDuckSearch = useCallback(
     (event?: React.FormEvent<HTMLFormElement>) => {
@@ -1689,17 +1766,22 @@ export default function FaceLandmarkerApp() {
           ? "border-emerald-400 focus:border-emerald-400 focus:ring-emerald-100"
           : "border-slate-200 focus:border-emerald-200 focus:ring-emerald-50"
       }`;
-    const sendButtonClasses =
-      focus === "send"
+    const sendButtonClasses = (() => {
+      if (isAgentMailSending) {
+        return "inline-flex items-center justify-center rounded-lg border border-transparent bg-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-600 shadow-sm cursor-not-allowed";
+      }
+
+      return focus === "send"
         ? "inline-flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm"
         : "inline-flex items-center justify-center rounded-lg border border-transparent bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700";
+    })();
 
     return (
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
         <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div>
             <h3 className="text-base font-semibold text-slate-900">Compose preview</h3>
-            <p className="text-sm text-slate-600">This form simulates the AgentMail workflow locally—no email is actually sent.</p>
+            <p className="text-sm text-slate-600">Submit details to send email through AgentMail with your configured API key.</p>
           </div>
           <label className="block text-sm">
             <span className="text-xs font-medium uppercase tracking-wide text-slate-500">To</span>
@@ -1739,8 +1821,9 @@ export default function FaceLandmarkerApp() {
             }}
             onFocus={() => focusAgentMailField("send")}
             className={sendButtonClasses}
+            disabled={isAgentMailSending}
           >
-            Simulate send
+            {isAgentMailSending ? "Sending…" : "Send email"}
           </button>
         </div>
 
