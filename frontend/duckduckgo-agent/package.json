@@ -1,0 +1,45 @@
+{
+  "name": "duckduckgo-search-agent",
+  "version": "1.0.0",
+  "description": "ASI1-compatible uAgent that searches DuckDuckGo and provides intelligent summaries",
+  "main": "agent.py",
+  "scripts": {
+    "setup": "python setup.py",
+    "start": "python agent.py",
+    "deploy": "python deploy.py",
+    "install": "pip install -r requirements.txt"
+  },
+  "keywords": [
+    "uagents",
+    "agentverse",
+    "duckduckgo",
+    "search",
+    "asi1",
+    "agent-chat-protocol"
+  ],
+  "author": "VoiceLink Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Yash1361/VoiceLink"
+  },
+  "engines": {
+    "python": ">=3.8"
+  },
+  "dependencies": {
+    "python": ">=3.8"
+  },
+  "agentverse": {
+    "name": "DuckDuckGo Search Agent",
+    "description": "ASI1-compatible agent that searches DuckDuckGo and provides intelligent summaries",
+    "protocol": "AgentChatProtocol",
+    "network": "agentverse",
+    "features": [
+      "DuckDuckGo search integration",
+      "ASI1 compatibility", 
+      "Agent Chat Protocol",
+      "Smart result formatting",
+      "Auto AI detection"
+    ]
+  }
+}

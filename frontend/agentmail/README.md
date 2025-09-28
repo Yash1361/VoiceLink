@@ -1,13 +1,28 @@
-# AgentMail API Wrapper
+# VoiceLink Email Tool Calling with ASI:One
 
-This module provides a simple wrapper around the AgentMail API for the VoiceLink project.
+This module integrates your existing AgentMail email functionality with ASI:One's tool calling capabilities, allowing AI models to send emails, search through messages, and manage your inbox intelligently.
+
+## Features
+
+- **Send Emails**: AI can compose and send emails through AgentMail
+- **Search Emails**: Find relevant emails based on context and keywords  
+- **Inbox Management**: Get inbox information and retrieve all messages
+- **Tool Calling Integration**: Uses ASI:One's function calling API for intelligent tool selection
 
 ## Setup
 
-1. Make sure you have your AgentMail API key in your `.env` file:
-```
-AGENTMAIL_API_KEY=your_api_key_here
-```
+1. **Install Dependencies** (already done):
+   ```bash
+   npm install agentmail dotenv
+   npm install --save-dev @types/node tsx
+   ```
+
+2. **Environment Variables**:
+   Create a `.env` file in your project root with:
+   ```env
+   AGENTMAIL_API_KEY=your_agentmail_api_key
+   ASI_API_KEY=your_asi_one_api_key
+   ```
 
 2. Import the functions you need:
 ```typescript

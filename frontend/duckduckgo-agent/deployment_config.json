@@ -1,0 +1,14 @@
+{
+  "agentverse_config": {
+    "name": "DuckDuckGo Search Agent",
+    "description": "ASI1-compatible agent that searches DuckDuckGo and provides intelligent summaries",
+    "protocol": "AgentChatProtocol",
+    "features": [
+      "DuckDuckGo search integration",
+      "ASI1 compatibility",
+      "Agent Chat Protocol",
+      "Smart result formatting",
+      "Auto AI detection"
+    ]
+  }
+}

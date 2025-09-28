@@ -1,0 +1,179 @@
+{
+  "Abstract": "Artificial intelligence is the capability of computational systems to perform tasks typically associated with human intelligence, such as learning, reasoning, problem-solving, perception, and decision-making. It is a field of research in computer science that develops and studies methods and software that enable machines to perceive their environment and use learning and intelligence to take actions that maximize their chances of achieving defined goals. High-profile applications of AI include advanced web search engines; recommendation systems; virtual assistants; autonomous vehicles; generative and creative tools; and superhuman play and analysis in strategy games. However, many AI applications are not perceived as AI: \"A lot of cutting edge AI has filtered into general applications, often without being called AI because once something becomes useful enough and common enough it's not labeled AI anymore.\"",
+  "AbstractSource": "Wikipedia",
+  "AbstractText": "Artificial intelligence is the capability of computational systems to perform tasks typically associated with human intelligence, such as learning, reasoning, problem-solving, perception, and decision-making. It is a field of research in computer science that develops and studies methods and software that enable machines to perceive their environment and use learning and intelligence to take actions that maximize their chances of achieving defined goals. High-profile applications of AI include advanced web search engines; recommendation systems; virtual assistants; autonomous vehicles; generative and creative tools; and superhuman play and analysis in strategy games. However, many AI applications are not perceived as AI: \"A lot of cutting edge AI has filtered into general applications, often without being called AI because once something becomes useful enough and common enough it's not labeled AI anymore.\"",
+  "AbstractURL": "https://en.wikipedia.org/wiki/Artificial_intelligence",
+  "Answer": "",
+  "AnswerType": "",
+  "Definition": "",
+  "DefinitionSource": "",
+  "DefinitionURL": "",
+  "Entity": "",
+  "Heading": "Artificial intelligence",
+  "Image": "",
+  "ImageHeight": 0,
+  "ImageIsLogo": 0,
+  "ImageWidth": 0,
+  "Infobox": "",
+  "Redirect": "",
+  "RelatedTopics": [
+    {
+      "FirstURL": "https://duckduckgo.com/c/Artificial_intelligence",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/c/Artificial_intelligence\">Artificial intelligence Category</a>",
+      "Text": "Artificial intelligence Category"
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/Association_for_the_Advancement_of_Artificial_Intelligence",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/Association_for_the_Advancement_of_Artificial_Intelligence\">Association for the Advancement of Artificial Intelligence</a> (AAAI).",
+      "Text": "Association for the Advancement of Artificial Intelligence (AAAI)."
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/Organoid_intelligence",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/Organoid_intelligence\">Organoid intelligence</a> \u2013 Use of brain cells and brain organoids for intelligent computing.",
+      "Text": "Organoid intelligence \u2013 Use of brain cells and brain organoids for intelligent computing."
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/DARWIN_EU",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/DARWIN_EU\">DARWIN EU</a> - A <a href=\"https://duckduckgo.com/?q=European%20Union\">European Union</a> initiative coordinated by the <a href=\"https://duckduckgo.com/?q=European%20Medicines%20Agency\">European Medicines Agency (EMA)</a> to generate and utilize <a href=\"https://duckduckgo.com/?q=Real%20world%20evidence\">real-world evidence (RWE)</a> to support the evaluation and supervision of medicines across the EU.",
+      "Text": "DARWIN EU - A European Union initiative coordinated by the European Medicines Agency (EMA) to generate and utilize real-world evidence (RWE) to support the evaluation and supervision of medicines across the EU."
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/Artificial_intelligence_in_Wikimedia_projects",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/Artificial_intelligence_in_Wikimedia_projects\">Artificial intelligence in Wikimedia projects</a> - Use of artificial intelligence to develop Wikipedia and other Wikimedia projects.",
+      "Text": "Artificial intelligence in Wikimedia projects - Use of artificial intelligence to develop Wikipedia and other Wikimedia projects."
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/c/Intelligence_by_type",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/c/Intelligence_by_type\">Intelligence by type</a>",
+      "Text": "Intelligence by type"
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/c/Formal_sciences",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/c/Formal_sciences\">Formal sciences</a>",
+      "Text": "Formal sciences"
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/c/Computational_fields_of_study",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/c/Computational_fields_of_study\">Computational fields of study</a>",
+      "Text": "Computational fields of study"
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/c/Computational_neuroscience",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/c/Computational_neuroscience\">Computational neuroscience</a>",
+      "Text": "Computational neuroscience"
+    },
+    {
+      "FirstURL": "https://duckduckgo.com/c/Cybernetics",
+      "Icon": {
+        "Height": "",
+        "URL": "",
+        "Width": ""
+      },
+      "Result": "<a href=\"https://duckduckgo.com/c/Cybernetics\">Cybernetics</a>",
+      "Text": "Cybernetics"
+    }
+  ],
+  "Results": [],
+  "Type": "A",
+  "meta": {
+    "attribution": null,
+    "blockgroup": null,
+    "created_date": null,
+    "description": "Wikipedia",
+    "designer": null,
+    "dev_date": null,
+    "dev_milestone": "live",
+    "developer": [
+      {
+        "name": "DDG Team",
+        "type": "ddg",
+        "url": "http://www.duckduckhack.com"
+      }
+    ],
+    "example_query": "nikola tesla",
+    "id": "wikipedia_fathead",
+    "is_stackexchange": null,
+    "js_callback_name": "wikipedia",
+    "live_date": null,
+    "maintainer": {
+      "github": "duckduckgo"
+    },
+    "name": "Wikipedia",
+    "perl_module": "DDG::Fathead::Wikipedia",
+    "producer": null,
+    "production_state": "online",
+    "repo": "fathead",
+    "signal_from": "wikipedia_fathead",
+    "src_domain": "en.wikipedia.org",
+    "src_id": 1,
+    "src_name": "Wikipedia",
+    "src_options": {
+      "directory": "",
+      "is_fanon": 0,
+      "is_mediawiki": 1,
+      "is_wikipedia": 1,
+      "language": "en",
+      "min_abstract_length": "20",
+      "skip_abstract": 0,
+      "skip_abstract_paren": 0,
+      "skip_end": "0",
+      "skip_icon": 0,
+      "skip_image_name": 0,
+      "skip_qr": "",
+      "source_skip": "",
+      "src_info": ""
+    },
+    "src_url": null,
+    "status": "live",
+    "tab": "About",
+    "topic": [
+      "productivity"
+    ],
+    "unsafe": 0
+  }
+}
