@@ -10,10 +10,29 @@ import { useBlendshapeGestures } from "./hooks/useGesture";
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/, "");
 const SUGGEST_ENDPOINT = `${API_BASE_URL}/suggest`;
 
+const speakText = (text: string) => {
+  if (!text) return;
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    console.warn("Speech synthesis is not supported in this browser.");
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  window.speechSynthesis.speak(utterance);
+};
+
 type SuggestionNode = {
   word: string;
   next?: SuggestionNode[];
 };
+
+type NavigatorGridOption =
+  | { type: "word"; label: string }
+  | { type: "submit"; label: "Submit Response" };
 
 export default function FaceLandmarkerApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -52,6 +71,16 @@ export default function FaceLandmarkerApp() {
 
   const columns = Math.min(3, Math.max(1, navigatorOptions.length));
   const prevActiveGesturesRef = useRef<string[]>([]);
+
+  const responseText = useMemo(() => responseWords.join(" "), [responseWords]);
+  const trimmedResponse = useMemo(() => responseText.trim(), [responseText]);
+  const gridOptions = useMemo<NavigatorGridOption[]>(
+    () => [
+      ...navigatorOptions.map((word) => ({ type: "word" as const, label: word })),
+      { type: "submit" as const, label: "Submit Response" },
+    ],
+    [navigatorOptions]
+  );
 
   const resetNavigator = useCallback(() => {
     setNavigatorOptions(["Start Typing"]);
@@ -132,7 +161,7 @@ export default function FaceLandmarkerApp() {
 ], []);
 
   const activeGestures = useBlendshapeGestures(blendShapes, gestures);
-  const totalWords = navigatorOptions.length;
+  const totalOptions = gridOptions.length;
 
   useEffect(() => {
     setCurrentWordIndex(0);
@@ -255,12 +284,37 @@ export default function FaceLandmarkerApp() {
     setInterimTranscript("");
   }, []);
 
-  const handleSelectGesture = useCallback(async () => {
-    if (navigatorOptions.length === 0) return;
+  const handleSubmitResponse = useCallback(() => {
+    if (!trimmedResponse) {
+      return;
+    }
 
-    const safeIndex = Math.min(currentWordIndex, Math.max(0, navigatorOptions.length - 1));
-    const currentOptionRaw = navigatorOptions[safeIndex] ?? "";
-    const currentOption = currentOptionRaw.trim();
+    speakText(trimmedResponse);
+    setTranscript("");
+    setInterimTranscript("");
+    resetNavigator();
+
+    stopTranscription();
+    if (isRunning && isSpeechSupported) {
+      startTranscription();
+    }
+  }, [isRunning, isSpeechSupported, resetNavigator, startTranscription, stopTranscription, trimmedResponse]);
+
+  const handleSelectGesture = useCallback(async () => {
+    if (gridOptions.length === 0) return;
+
+    const safeIndex = Math.min(currentWordIndex, Math.max(0, gridOptions.length - 1));
+    const selected = gridOptions[safeIndex];
+    if (!selected) return;
+
+    if (selected.type === "submit") {
+      if (trimmedResponse) {
+        handleSubmitResponse();
+      }
+      return;
+    }
+
+    const currentOption = selected.label.trim();
     const normalizedOption = currentOption.toLowerCase();
 
     if (!currentOption || normalizedOption === "loading responses...") {
@@ -277,7 +331,6 @@ export default function FaceLandmarkerApp() {
       setIsLoadingSuggestions(true);
       setNavigatorOptions(["Loading Responses..."]);
       setCurrentSuggestions([]);
-      setResponseWords([]);
       setCurrentWordIndex(0);
 
       stopTranscription();
@@ -355,7 +408,7 @@ export default function FaceLandmarkerApp() {
       setCurrentSuggestions([]);
       setNavigatorOptions(["Start Typing"]);
     }
-  }, [currentSuggestions, currentWordIndex, interimTranscript, isLoadingSuggestions, navigatorOptions, stopTranscription, transcript]);
+  }, [currentSuggestions, currentWordIndex, gridOptions, handleSubmitResponse, interimTranscript, isLoadingSuggestions, navigatorOptions, stopTranscription, transcript, trimmedResponse]);
 
   useEffect(() => {
     const prev = prevActiveGesturesRef.current;
@@ -369,20 +422,36 @@ export default function FaceLandmarkerApp() {
         }
 
         setCurrentWordIndex((current) => {
+          const lastIndex = totalOptions - 1;
           switch (gesture) {
             case "Right": {
-              const isEndOfRow = columns <= 1 || current % columns === columns - 1 || current + 1 >= totalWords;
-              return isEndOfRow ? current : current + 1;
+              if (current === lastIndex) return current;
+              const next = current + 1;
+              return next >= navigatorOptions.length ? current : next;
             }
             case "Left": {
+              if (current === lastIndex) return current; // Submit behaves like single column
               const isStartOfRow = current % columns === 0;
               return isStartOfRow ? current : current - 1;
             }
             case "Down": {
+              if (current === lastIndex) return current;
               const next = current + columns;
-              return next < totalWords ? next : current;
+              if (next < navigatorOptions.length) {
+                return next;
+              }
+              return lastIndex;
             }
             case "Up": {
+              if (current === lastIndex) {
+                if (navigatorOptions.length === 0) return current;
+                const lastWordIndex = navigatorOptions.length - 1;
+                const lastRowStart = Math.max(0, Math.floor(lastWordIndex / columns) * columns);
+                const lastRowLength = navigatorOptions.length - lastRowStart;
+                const submitColumn = current % columns;
+                const columnInLastRow = Math.min(submitColumn, Math.max(0, lastRowLength - 1));
+                return lastRowStart + columnInLastRow;
+              }
               const next = current - columns;
               return next >= 0 ? next : current;
             }
@@ -394,7 +463,7 @@ export default function FaceLandmarkerApp() {
     }
 
     prevActiveGesturesRef.current = activeGestures;
-  }, [activeGestures, columns, handleSelectGesture, totalWords]);
+  }, [activeGestures, columns, handleSelectGesture, navigatorOptions, totalOptions]);
 
   const loadModel = useCallback(async () => {
     setLoadingMsg("Loading MediaPipe Tasks…");
@@ -688,7 +757,7 @@ export default function FaceLandmarkerApp() {
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">My Response</div>
                 <div className="mt-2 min-h-[52px] rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap">
                   {responseWords.length > 0 ? (
-                    <span>{responseWords.join(" ")}</span>
+                    <span>{responseText}</span>
                   ) : (
                     <span className="text-slate-400">No words selected yet.</span>
                   )}
@@ -700,30 +769,51 @@ export default function FaceLandmarkerApp() {
                   className="grid gap-3"
                   style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(columns, navigatorOptions.length))}, minmax(0, 1fr))` }}
                 >
-                  {navigatorOptions.map((option, index) => {
-                    const isActiveWord = index === currentWordIndex;
-                    const normalizedOption = option.trim().toLowerCase();
-                    const isInformational = [
+                  {gridOptions.map((option, index) => {
+                    const isActive = index === currentWordIndex;
+                    const isSubmit = option.type === "submit";
+                    const normalizedOption = option.label.trim().toLowerCase();
+                    const isInformational = !isSubmit && [
                       "loading responses...",
                       "no suggestions available",
                       "unable to load responses",
                     ].includes(normalizedOption);
+                    const hasResponse = Boolean(trimmedResponse);
 
-                    let wordClasses = "rounded-xl border px-4 py-5 text-center text-sm font-medium shadow-sm transition-colors";
+                    let itemClasses = "rounded-xl border px-4 py-5 text-center text-sm font-medium shadow-sm transition-colors";
 
-                    if (isInformational) {
-                      wordClasses += " border-slate-200 bg-slate-50 text-slate-400";
-                    } else if (isActiveWord) {
-                      wordClasses += isSelectActive
+                    if (isSubmit) {
+                      if (!hasResponse) {
+                        itemClasses += " border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed";
+                      } else if (isActive) {
+                        itemClasses += isSelectActive
+                          ? " border-emerald-500 bg-emerald-600 text-white"
+                          : " border-emerald-400 bg-emerald-100 text-emerald-700";
+                        itemClasses += " cursor-pointer";
+                      } else {
+                        itemClasses += " border-emerald-400 bg-emerald-50 text-emerald-700 cursor-pointer";
+                      }
+                    } else if (isInformational) {
+                      itemClasses += " border-slate-200 bg-slate-50 text-slate-400";
+                    } else if (isActive) {
+                      itemClasses += isSelectActive
                         ? " border-emerald-400 bg-emerald-50 text-emerald-700"
                         : " border-slate-300 bg-slate-100 text-slate-900";
                     } else {
-                      wordClasses += " border-slate-100 bg-white text-slate-500";
+                      itemClasses += " border-slate-100 bg-white text-slate-500";
                     }
 
+                    const spanStyle = isSubmit
+                      ? { gridColumn: `1 / span ${Math.max(1, Math.min(columns, navigatorOptions.length))}` }
+                      : undefined;
+
                     return (
-                      <div key={`${option}-${index}`} className={wordClasses}>
-                        {option}
+                      <div
+                        key={`${option.label}-${index}`}
+                        className={`${itemClasses} ${isSubmit ? "py-4" : ""}`.trim()}
+                        style={spanStyle}
+                      >
+                        {option.label}
                       </div>
                     );
                   })}
