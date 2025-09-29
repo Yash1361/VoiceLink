@@ -5,9 +5,12 @@
 .env.test.local
 .env.production.local
 .env.*.local
+agentic_ai/.env
+agentic_ai/.env.example
 
 # Python
 __pycache__/
+agentic_ai/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -85,7 +88,7 @@ coverage/
 # Yarn Integrity file
 .yarn-integrity
 
-# parcel-bundler cache (https://parceljs.org/)
+# parcel-bundler cache
 .cache
 .parcel-cache
 
